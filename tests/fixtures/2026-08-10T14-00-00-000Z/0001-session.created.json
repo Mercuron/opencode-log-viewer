@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "event_id": "evt_24f5dfa2fdf34bc959a6cccc",
+  "source_id": "2e54c62eb839a837",
+  "source_name": "mvk-codeqa",
+  "session_id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+  "parent_session_id": null,
+  "sequence": 1,
+  "event_type": "session.created",
+  "event_time": null,
+  "observed_at": "2026-08-10T14:00:01.000Z",
+  "context": {
+    "project": "mvk",
+    "directory": "/workspace/mvk-egis",
+    "worktree": "/workspace/mvk-egis",
+    "hostname": "geo-ai",
+    "opencode_version": "1.18.16",
+    "plugin_version": "0.1.0",
+    "inference_base_url": "http://192.168.100.55:4099"
+  },
+  "payload": {
+    "info": {
+      "id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+      "projectID": "prj_mvk_egis",
+      "directory": "/workspace/mvk-egis",
+      "parentID": null,
+      "title": "code_sql_mvk",
+      "version": "0.1.0",
+      "time": {
+        "created": 1770000000000,
+        "updated": 1770000000000
+      }
+    }
+  }
+}

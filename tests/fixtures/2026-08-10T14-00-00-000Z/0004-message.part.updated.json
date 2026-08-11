@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "event_id": "evt_830bf3437aa87af4cfdeea85",
+  "source_id": "2e54c62eb839a837",
+  "source_name": "mvk-codeqa",
+  "session_id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+  "parent_session_id": null,
+  "sequence": 4,
+  "event_type": "message.part.updated",
+  "event_time": null,
+  "observed_at": "2026-08-10T14:00:04.000Z",
+  "context": {
+    "project": "mvk",
+    "directory": "/workspace/mvk-egis",
+    "worktree": "/workspace/mvk-egis",
+    "hostname": "geo-ai",
+    "opencode_version": "1.18.16",
+    "plugin_version": "0.1.0",
+    "inference_base_url": "http://192.168.100.55:4099"
+  },
+  "payload": {
+    "part": {
+      "id": "prt_text_u1",
+      "sessionID": "ses_00fdbcb3affezdUs1su8KIvq3b",
+      "messageID": "msg_user_001",
+      "type": "text",
+      "text": "Почему запрос к [Клиенты] тормозит на проде?",
+      "time": {
+        "start": 1770000000500,
+        "end": 1770000000500
+      }
+    }
+  }
+}

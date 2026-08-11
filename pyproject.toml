@@ -1,0 +1,35 @@
+[project]
+name = "opencode-log-viewer"
+version = "0.1.0"
+description = "Trace viewer for OpenCode agent observability events."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Mercuron" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "itsdangerous>=2.2",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.urls]
+Homepage = "https://github.com/Mercuron/opencode-log-viewer"
+Repository = "https://github.com/Mercuron/opencode-log-viewer"
+Issues = "https://github.com/Mercuron/opencode-log-viewer/issues"
+
+[project.scripts]
+viewer = "viewer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["viewer*"]
+
+[tool.setuptools.package-data]
+viewer = ["static/**/*"]

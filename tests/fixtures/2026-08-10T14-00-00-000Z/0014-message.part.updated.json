@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "event_id": "evt_2d7a3c0681886cc2f518c8dc",
+  "source_id": "2e54c62eb839a837",
+  "source_name": "mvk-codeqa",
+  "session_id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+  "parent_session_id": null,
+  "sequence": 14,
+  "event_type": "message.part.updated",
+  "event_time": null,
+  "observed_at": "2026-08-10T14:00:14.000Z",
+  "context": {
+    "project": "mvk",
+    "directory": "/workspace/mvk-egis",
+    "worktree": "/workspace/mvk-egis",
+    "hostname": "geo-ai",
+    "opencode_version": "1.18.16",
+    "plugin_version": "0.1.0",
+    "inference_base_url": "http://192.168.100.55:4099"
+  },
+  "payload": {
+    "part": {
+      "id": "prt_tool_3",
+      "sessionID": "ses_00fdbcb3affezdUs1su8KIvq3b",
+      "messageID": "msg_asst_001",
+      "type": "tool",
+      "callID": "call_003",
+      "tool": "bash",
+      "state": {
+        "status": "completed",
+        "input": {
+          "command": "sqlcmd -Q \"select   *   from [Клиенты] where Статус = 'неактивен'/* retry */\""
+        },
+        "output": "0 rows returned",
+        "title": "bash",
+        "metadata": {
+          "exitCode": 0
+        },
+        "time": {
+          "start": 1770000025000,
+          "end": 1770000025500
+        }
+      }
+    }
+  }
+}

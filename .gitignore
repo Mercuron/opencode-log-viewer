@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+data/
+*.db
+*.db-wal
+*.db-shm
+frontend/node_modules/
+frontend/dist/
+viewer/static/*
+!viewer/static/.gitkeep
+.env
+.claude/

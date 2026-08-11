@@ -1,0 +1,17 @@
+services:
+  viewer:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - viewer-data:/data
+      # Mount OpenCode's on-disk storage read-only to use the one-time
+      # "import existing sessions" button in Settings, or `viewer import`.
+      # Adjust the host path to wherever OpenCode actually stores data.
+      # - ${HOME}/.local/share/opencode:/import/opencode:ro
+    restart: unless-stopped
+
+volumes:
+  viewer-data:

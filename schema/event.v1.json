@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://opencode-observability/schema/event.v1.json",
+  "title": "OpenCode Observability Event",
+  "description": "Contract between opencode-log-plugin and opencode-log-viewer. schema_version is bumped on any breaking change; this file must stay identical (synced by hand) in both repositories.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "source_id",
+    "source_name",
+    "session_id",
+    "sequence",
+    "event_type",
+    "observed_at",
+    "context",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": {
+      "type": "string",
+      "description": "Unique id, used for idempotent ingestion. Format: evt_<ulid>."
+    },
+    "source_id": {
+      "type": "string",
+      "description": "sha256(hostname + source_name)[:16], stable per agent host+project."
+    },
+    "source_name": { "type": "string" },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Null for events that are not scoped to a session (e.g. lsp.updated, installation.updated, pty.*, vcs.branch.updated)."
+    },
+    "parent_session_id": { "type": ["string", "null"] },
+    "sequence": {
+      "type": "integer",
+      "description": "Monotonic counter within the plugin process, used to restore order when timestamps tie."
+    },
+    "event_type": {
+      "type": "string",
+      "description": "OpenCode Bus event type (e.g. message.part.updated) or a plugin-internal diagnostic type prefixed with plugin. (e.g. plugin.events_dropped)."
+    },
+    "event_time": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Timestamp reported by OpenCode itself, if the event payload carries one. Null if OpenCode did not provide one."
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Moment the plugin process received the event."
+    },
+    "context": {
+      "type": "object",
+      "required": ["project", "directory", "worktree", "hostname", "opencode_version", "plugin_version"],
+      "properties": {
+        "project": { "type": ["string", "null"] },
+        "directory": { "type": ["string", "null"] },
+        "worktree": { "type": ["string", "null"] },
+        "hostname": { "type": "string" },
+        "opencode_version": { "type": ["string", "null"] },
+        "plugin_version": { "type": "string" },
+        "inference_base_url": { "type": ["string", "null"] }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "Raw event payload as received from OpenCode (Bus Event.properties, or the tool.execute.before/after hook input+output), unmodified except for truncation."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "True if payload was cut down to fit OPENCODE_LOG_MAX_PAYLOAD."
+    },
+    "original_size": {
+      "type": "integer",
+      "description": "Original payload size in bytes, present when truncated=true."
+    }
+  }
+}

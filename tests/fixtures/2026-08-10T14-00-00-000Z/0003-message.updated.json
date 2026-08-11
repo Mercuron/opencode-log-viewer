@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "event_id": "evt_77d67d9730104a95d973d5db",
+  "source_id": "2e54c62eb839a837",
+  "source_name": "mvk-codeqa",
+  "session_id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+  "parent_session_id": null,
+  "sequence": 3,
+  "event_type": "message.updated",
+  "event_time": null,
+  "observed_at": "2026-08-10T14:00:03.000Z",
+  "context": {
+    "project": "mvk",
+    "directory": "/workspace/mvk-egis",
+    "worktree": "/workspace/mvk-egis",
+    "hostname": "geo-ai",
+    "opencode_version": "1.18.16",
+    "plugin_version": "0.1.0",
+    "inference_base_url": "http://192.168.100.55:4099"
+  },
+  "payload": {
+    "info": {
+      "id": "msg_user_001",
+      "sessionID": "ses_00fdbcb3affezdUs1su8KIvq3b",
+      "role": "user",
+      "time": {
+        "created": 1770000000500
+      },
+      "agent": "build",
+      "model": {
+        "providerID": "llama-server",
+        "modelID": "qwen2.5-coder-32b"
+      }
+    }
+  }
+}

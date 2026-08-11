@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "event_id": "evt_d03fe02030dea52d2cacfde0",
+  "source_id": "2e54c62eb839a837",
+  "source_name": "mvk-codeqa",
+  "session_id": "ses_00fdbcb3affezdUs1su8KIvq3b",
+  "parent_session_id": null,
+  "sequence": 18,
+  "event_type": "message.updated",
+  "event_time": null,
+  "observed_at": "2026-08-10T14:00:18.000Z",
+  "context": {
+    "project": "mvk",
+    "directory": "/workspace/mvk-egis",
+    "worktree": "/workspace/mvk-egis",
+    "hostname": "geo-ai",
+    "opencode_version": "1.18.16",
+    "plugin_version": "0.1.0",
+    "inference_base_url": "http://192.168.100.55:4099"
+  },
+  "payload": {
+    "info": {
+      "id": "msg_asst_001",
+      "sessionID": "ses_00fdbcb3affezdUs1su8KIvq3b",
+      "role": "assistant",
+      "time": {
+        "created": 1770000001000,
+        "completed": 1770000023000
+      },
+      "parentID": "msg_user_001",
+      "modelID": "qwen2.5-coder-32b",
+      "providerID": "llama-server",
+      "mode": "build",
+      "path": {
+        "cwd": "/workspace/mvk-egis",
+        "root": "/workspace/mvk-egis"
+      },
+      "cost": 0,
+      "tokens": {
+        "input": 5230,
+        "output": 180,
+        "reasoning": 340,
+        "cache": {
+          "read": 0,
+          "write": 5230
+        }
+      },
+      "finish": "tool-calls"
+    }
+  }
+}

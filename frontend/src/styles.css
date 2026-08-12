@@ -395,6 +395,26 @@ section {
 .feed-type { font-weight: 600; }
 .feed-duration { margin-left: auto; color: var(--muted); }
 
+.subagent-link {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.subagent-link a {
+  font-weight: 600;
+}
+
+.subagent-link-missing {
+  color: var(--muted);
+}
+
+.step-context-toggle {
+  padding: 0.3rem 0.7rem 0.6rem;
+}
+
 .feed-detail {
   padding: 0.5rem 0.7rem 0.8rem;
   border-top: 1px solid var(--border);

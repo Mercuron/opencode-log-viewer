@@ -39,6 +39,32 @@ def test_session_without_context_snapshot_has_no_rows(conn, settings):
     assert rows == []
 
 
+def test_tool_input_and_text_parts_get_token_estimates(conn, settings, client):
+    """Tool call *arguments* and text/reasoning content used to contribute nothing to
+    output_tokens_est/input_tokens_est - the "known from tool outputs" figure only ever
+    looked at tool output text, which is most of why it undercounted real context usage so
+    badly. Both should now carry an estimate."""
+    events = load_fixture_events()
+    write_batch(conn, events, settings)
+
+    row = conn.execute(
+        "SELECT input_tokens_est, output_tokens_est FROM parts WHERE type = 'tool' AND input_json IS NOT NULL LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row["input_tokens_est"] is not None and row["input_tokens_est"] > 0
+
+    text_row = conn.execute(
+        "SELECT output_tokens_est FROM parts WHERE type IN ('text', 'reasoning') AND text IS NOT NULL LIMIT 1"
+    ).fetchone()
+    assert text_row is not None
+    assert text_row["output_tokens_est"] is not None and text_row["output_tokens_est"] > 0
+
+    assert client.post("/api/v1/auth/login", json={"password": "adminpw"}).status_code == 200
+    detail = client.get(f"/api/v1/sessions/{SID}").json()
+    attributed = detail["context_attribution"]
+    assert any(a["input_tokens_est"] for a in attributed)
+
+
 def test_context_snapshot_survives_reindex(conn, settings):
     from viewer.indexer import reindex_session
 

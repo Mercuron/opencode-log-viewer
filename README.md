@@ -12,46 +12,23 @@ go, which tools were called and with what, and where did the agent go wrong.
 This is a diagnostic tool, not an agent control panel. The viewer never talks to the agent — the
 connection is `plugin → viewer`, one-way, over HTTP.
 
-## Stack, and why
-
-- **Backend:** Python 3.12+, FastAPI, uvicorn, a single worker (`--workers 1`) — SQLite doesn't
-  tolerate concurrent writes from multiple processes.
-- **Storage:** SQLite in WAL mode, one file on a Docker volume (`/data/viewer.db`), accessed via
-  the standard library's `sqlite3` — no ORM, the queries are analytical and hand-written. The
-  normalized tables (`sessions`, `messages`, `parts`, …) are a rebuildable index on top of the
-  `events` table, which is the actual source of truth. `viewer reindex` rebuilds the index from
-  scratch at any time.
-- **Frontend: React + Vite.** Chosen over a server-rendered alternative (e.g. Jinja2 + HTMX)
-  because the step feed is genuinely interactive — expanding items, filtering by tool, a
-  waterfall view, live updates over SSE — and that's simpler to write directly in React than to
-  layer on top of server-side rendering. The frontend is built at Docker build time
-  (`node:22-alpine`) and served by the same app via `StaticFiles` — no Node needed at runtime.
-- **CLI:** a `console_scripts` entry point named `viewer` (`import`, `import-inference`,
-  `reindex`, `prune`) — see below.
-
-Ingestion is designed to never block the event loop: the HTTP handler puts the batch on an
-`asyncio.Queue` and awaits the result from a single background writer task (`IngestWorker`), which
-performs the actual write via `asyncio.to_thread`. That gives both "single writer process" and
-non-blocking ingestion at the same time.
-
 ## Quick start
 
+**1. Run the viewer:**
+
 ```bash
+git clone https://github.com/Mercuron/opencode-log-viewer.git && cd opencode-log-viewer
 cp .env.example .env    # change INGEST_SECRET and UI_PASSWORD before doing anything else
 docker compose up -d --build
 ```
 
-Open `http://localhost:8080`. Empty is expected until the first event arrives from the plugin, or
-until you run the one-time history import (Settings → "Import existing sessions" in the UI).
+Open `http://localhost:8080`. Empty is expected until the first event arrives, or until you run
+the one-time history import (Settings → "Import existing sessions"). Exactly one public port is
+required: 8080. Data survives `docker compose down && docker compose up` (named volume
+`viewer-data`).
 
-Exactly one public port is required: 8080. Data survives `docker compose down && docker compose up`
-(named volume `viewer-data`).
-
-### Connecting an agent
-
-See [opencode-log-plugin](https://www.npmjs.com/package/opencode-log-plugin) — installing it is
-one line in the agent's `opencode.json` (it's published on npm), plus two environment variables
-pointing at this viewer:
+**2. Connect an agent to it:** install [opencode-log-plugin](https://github.com/Mercuron/opencode-log-plugin)
+— one line in the agent's `opencode.json`, plus two environment variables pointing at this viewer:
 
 ```env
 OPENCODE_LOG_VIEWER_URL=http://<this-viewer-host>:8080
@@ -130,10 +107,10 @@ SESSION_COOKIE_KEY=...   # signs the UI session cookie
 were also the UI password, anyone with access to any agent host could read every other source's
 sessions — and sessions can contain production database output.
 
-**The viewer stores excerpts from production logs by design.** By default only obvious passwords
-and secret-looking tokens are redacted (`REDACT_PATTERNS` in `.env.example`) — aggressively
-stripping tool output would defeat the point of the tool. Restrict network access to it, and
-**don't expose it publicly.**
+**The viewer stores excerpts from production logs by design, unredacted, exactly as received** —
+aggressively stripping tool output at ingest would defeat the point of the tool. Redaction is
+opt-in and applied only when you choose "copy redacted" while exporting a session (rules are
+managed in Settings). Restrict network access to the viewer, and **don't expose it publicly.**
 
 ## Development
 
@@ -145,19 +122,6 @@ cd frontend && npm install && npm run dev   # proxies to localhost:8080, see vit
 
 Tests run against `tests/fixtures/` (a copy of `opencode-log-plugin/fixtures/`) — the viewer is
 developed and tested without a live agent.
-
-## Docker: connecting an agent
-
-Logging **needs no inbound port on the agent** — the plugin only ever makes outbound connections.
-
-- agent and viewer on the same Docker network: `OPENCODE_LOG_VIEWER_URL=http://viewer:8080`
-- viewer on the host: `http://host.docker.internal:8080` (Linux: add
-  `extra_hosts: ["host.docker.internal:host-gateway"]` to the agent's compose file)
-- viewer on another machine: `http://192.168.x.x:8080` or HTTPS
-
-A viewer → agent connection does not exist in any of these scenarios — see
-[opencode-log-plugin](https://www.npmjs.com/package/opencode-log-plugin)'s README for the full
-picture from the agent's side.
 
 ## Data model and event contract
 

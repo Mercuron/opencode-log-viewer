@@ -47,3 +47,34 @@ def test_export_truncates_large_outputs_with_original_size_note(conn, settings):
 
 def test_export_missing_session_returns_none(conn):
     assert build_markdown(conn, "does-not-exist") is None
+
+
+def test_export_redact_false_by_default_leaves_raw_data(conn, settings, client):
+    events = load_fixture_events()
+    for e in events:
+        if e["event_type"] == "message.part.updated" and (e["payload"].get("part") or {}).get("type") == "tool":
+            state = e["payload"]["part"].get("state") or {}
+            if state.get("status") == "completed":
+                state["output"] = "token is TOPSECRET-12345, keep it safe"
+    write_batch(conn, events, settings)
+
+    assert client.post("/api/v1/auth/login", json={"password": "adminpw"}).status_code == 200
+    client.post("/api/v1/settings/redact-patterns", json={"pattern": r"TOPSECRET-\d+"})
+
+    md_clean = build_markdown(conn, SESSION_ID)
+    assert "TOPSECRET-12345" in md_clean
+
+    md_redacted = build_markdown(conn, SESSION_ID, redact=True)
+    assert "TOPSECRET-12345" not in md_redacted
+    assert "[REDACTED]" in md_redacted
+
+
+def test_export_include_children_appends_subagent_section(conn, settings):
+    write_batch(conn, load_fixture_events(), settings)
+
+    md_without = build_markdown(conn, SESSION_ID, include_children=False)
+    assert "sql-review subagent" not in md_without
+
+    md_with = build_markdown(conn, SESSION_ID, include_children=True)
+    assert "## Субагент:" in md_with
+    assert "sql-review subagent" in md_with

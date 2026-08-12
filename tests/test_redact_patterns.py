@@ -34,7 +34,10 @@ def test_invalid_regex_is_rejected(client):
     assert r.status_code == 400
 
 
-def test_new_pattern_applies_to_the_next_ingest(client, conn):
+def test_ingest_never_redacts_stored_payload(client, conn):
+    """Redaction is opt-in and applied only at export time (see test_export.py) - ingest
+    always stores the raw payload, even with patterns enabled, so nothing is ever silently
+    lost at rest."""
     _login(client)
     client.post("/api/v1/settings/redact-patterns", json={"pattern": r"TOPSECRET-\d+"})
 
@@ -42,11 +45,15 @@ def test_new_pattern_applies_to_the_next_ingest(client, conn):
     marked = dict(events[0])
     marked["event_id"] = "evt_redact_test"
     marked["sequence"] = 77001
-    marked["payload"] = {"info": {"note": "token is TOPSECRET-12345, keep it safe"}}
+    marked["payload"] = {
+        "info": {"note": "token is TOPSECRET-12345, keep it safe"},
+        "part": {"tool": "mcp__codegraph_frontend__codegraph_explore"},
+    }
 
     headers = {"Authorization": "Bearer s3cret"}
     client.post("/api/v1/events/batch", json={"events": [marked]}, headers=headers)
 
     row = conn.execute("SELECT payload_json FROM events WHERE event_id = ?", ("evt_redact_test",)).fetchone()
-    assert "TOPSECRET-12345" not in row["payload_json"]
-    assert "[REDACTED]" in row["payload_json"]
+    assert "TOPSECRET-12345" in row["payload_json"]
+    assert "mcp__codegraph_frontend__codegraph_explore" in row["payload_json"]
+    assert "[REDACTED]" not in row["payload_json"]

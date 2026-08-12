@@ -236,10 +236,22 @@ async def get_session(session_id: str, request: Request):
         s["total_ms"] += p["duration_ms"] or 0
         s["tokens_est"] += p["output_tokens_est"] or 0
 
+    # output_tokens_est also covers text/reasoning content (falls back to p.text when there's
+    # no tool output - see indexer.py); input_tokens_est covers tool call arguments, which
+    # used to be invisible here entirely despite counting toward the model's real context.
     context_attribution = sorted(
-        ({"part_id": p["id"], "seq": p["seq"], "tool_name": p["tool_name"], "output_tokens_est": p["output_tokens_est"]}
-         for p in parts if p["output_tokens_est"]),
-        key=lambda x: -x["output_tokens_est"],
+        (
+            {
+                "part_id": p["id"],
+                "seq": p["seq"],
+                "tool_name": p["tool_name"],
+                "output_tokens_est": p["output_tokens_est"],
+                "input_tokens_est": p["input_tokens_est"],
+            }
+            for p in parts
+            if p["output_tokens_est"] or p["input_tokens_est"]
+        ),
+        key=lambda x: -((x["output_tokens_est"] or 0) + (x["input_tokens_est"] or 0)),
     )[:15]
 
     context_growth = [
@@ -302,12 +314,19 @@ async def update_session(session_id: str, body: UpdateSessionBody, request: Requ
 
 
 @router.get("/sessions/{session_id}/export")
-async def export_session(session_id: str, request: Request, format: str = "md", limit: int = 1500):
+async def export_session(
+    session_id: str,
+    request: Request,
+    format: str = "md",
+    limit: int = 1500,
+    redact: bool = False,
+    include_children: bool = False,
+):
     require_ui_session(request, _settings(request))
     if format != "md":
         raise HTTPException(status_code=400, detail="only format=md is supported")
     conn = _conn(request)
-    md = build_markdown(conn, session_id, limit=limit)
+    md = build_markdown(conn, session_id, limit=limit, redact=redact, include_children=include_children)
     if md is None:
         raise HTTPException(status_code=404, detail="session not found")
     return PlainTextResponse(md, media_type="text/markdown")
@@ -502,3 +521,43 @@ async def cleanup_execute(body: CleanupBody, request: Request):
     for row in rows:
         await asyncio.to_thread(delete_session, conn, row["id"])
     return {"deleted_sessions": len(rows)}
+
+
+class MergeSourcesBody(BaseModel):
+    from_id: str
+    into_id: str
+
+
+@router.post("/admin/sources/merge")
+async def merge_sources(body: MergeSourcesBody, request: Request):
+    """Reassigns every session/event from one source to another and drops the now-empty
+    source row. Exists because source_id is derived from the agent's hostname+name (see
+    opencode-log-plugin), which can change across a container recreation - the same physical
+    agent then shows up as a brand new source until merged here."""
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    if body.from_id == body.into_id:
+        raise HTTPException(status_code=400, detail="from_id and into_id must differ")
+    from_row = conn.execute("SELECT * FROM sources WHERE id = ?", (body.from_id,)).fetchone()
+    into_row = conn.execute("SELECT * FROM sources WHERE id = ?", (body.into_id,)).fetchone()
+    if not from_row or not into_row:
+        raise HTTPException(status_code=404, detail="source not found")
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        sessions_moved = conn.execute(
+            "UPDATE sessions SET source_id = ? WHERE source_id = ?", (body.into_id, body.from_id)
+        ).rowcount
+        events_moved = conn.execute(
+            "UPDATE events SET source_id = ? WHERE source_id = ?", (body.into_id, body.from_id)
+        ).rowcount
+        conn.execute(
+            "UPDATE sources SET first_seen_at = MIN(first_seen_at, ?), last_seen_at = MAX(last_seen_at, ?) WHERE id = ?",
+            (from_row["first_seen_at"], from_row["last_seen_at"], body.into_id),
+        )
+        conn.execute("DELETE FROM sources WHERE id = ?", (body.from_id,))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return {"sessions_moved": sessions_moved, "events_moved": events_moved}

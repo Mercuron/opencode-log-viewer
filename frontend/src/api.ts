@@ -102,6 +102,7 @@ export interface Part {
   output_text: string | null
   output_bytes: number | null
   output_tokens_est: number | null
+  input_tokens_est: number | null
   metadata_json: string | null
   linked_session_id?: string
   linked_session_match?: string
@@ -148,7 +149,13 @@ export interface SessionDetail {
   children: { id: string; title: string | null; status: string | null; agent: string | null; created_at: string | null }[]
   inference_spans: Record<string, unknown>[]
   tool_stats: Record<string, { calls: number; errors: number; total_ms: number; tokens_est: number }>
-  context_attribution: { part_id: string; seq: number; tool_name: string | null; output_tokens_est: number }[]
+  context_attribution: {
+    part_id: string
+    seq: number
+    tool_name: string | null
+    output_tokens_est: number | null
+    input_tokens_est: number | null
+  }[]
   context_growth: { seq: number; tokens_input: number; message_id: string }[]
 }
 
@@ -166,8 +173,12 @@ export const api = {
     return request<Session[]>(`/sessions${suffix}`)
   },
   session: (id: string) => request<SessionDetail>(`/sessions/${id}`),
-  exportUrl: (id: string, limit = 1500) => `${BASE}/sessions/${id}/export?format=md&limit=${limit}`,
-  exportMarkdown: (id: string, limit = 1500) => request<string>(`/sessions/${id}/export?format=md&limit=${limit}`),
+  exportUrl: (id: string, opts: { limit?: number; redact?: boolean; includeChildren?: boolean } = {}) =>
+    `${BASE}/sessions/${id}/export?format=md&limit=${opts.limit ?? 1500}&redact=${!!opts.redact}&include_children=${!!opts.includeChildren}`,
+  exportMarkdown: (id: string, opts: { limit?: number; redact?: boolean; includeChildren?: boolean } = {}) =>
+    request<string>(
+      `/sessions/${id}/export?format=md&limit=${opts.limit ?? 1500}&redact=${!!opts.redact}&include_children=${!!opts.includeChildren}`
+    ),
   streamUrl: (id: string) => `${BASE}/sessions/${id}/stream`,
   importStorage: (path: string, sourceName: string) =>
     request<{ accepted: number; duplicates: number; rejected: number; sessions_touched: number }>("/import/storage", {
@@ -199,5 +210,10 @@ export const api = {
     request<{ deleted_sessions: number }>("/admin/cleanup/execute", {
       method: "POST",
       body: JSON.stringify({ older_than_days: olderThanDays }),
+    }),
+  mergeSources: (fromId: string, intoId: string) =>
+    request<{ sessions_moved: number; events_moved: number }>("/admin/sources/merge", {
+      method: "POST",
+      body: JSON.stringify({ from_id: fromId, into_id: intoId }),
     }),
 }

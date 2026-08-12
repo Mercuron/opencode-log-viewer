@@ -109,13 +109,24 @@ def _split_into_turns(message_order: list[str], messages: dict[str, "_Message"])
     return turns
 
 
-def _turn_span(turn_mids: list[str], messages: dict[str, "_Message"]) -> tuple[int, int] | None:
+def _turn_span(
+    turn_mids: list[str], messages: dict[str, "_Message"], last_observed_ms: int | None = None
+) -> tuple[int, int] | None:
     starts = [messages[mid].started_ms for mid in turn_mids if messages[mid].started_ms is not None]
     if not starts:
         return None
     ends = [messages[mid].completed_ms for mid in turn_mids if messages[mid].completed_ms is not None]
     start = min(starts)
-    end = max(ends) if ends else max(starts)  # no assistant reply yet - don't invent an end
+    if ends:
+        end = max(ends)
+    elif last_observed_ms is not None:
+        # No assistant reply has completed yet, but we know events kept arriving up to
+        # last_observed_ms (the turn is still live) - stretch to there instead of freezing
+        # at the reply's own start, or a still-running turn looks like a near-zero-length
+        # window where any small coverage gap reads as ~100% unaccounted.
+        end = max(max(starts), last_observed_ms)
+    else:
+        end = max(starts)
     return start, max(start, end)
 
 
@@ -343,6 +354,13 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
     tool_errors = 0
     covered: list[tuple[int, int]] = []
 
+    # `events` is ordered by (sequence, observed_at) - see _fetch_events - so the last
+    # element carries the latest observed_at we actually have for this session. Used below
+    # to treat a still-running message/part (started, not yet completed) as covered up to
+    # "the last point we know something was happening" instead of contributing zero coverage
+    # and making a live session look like it has 100% unaccounted time (see test_turns.py).
+    last_observed_ms = parse_iso(events[-1]["observed_at"]) if events else None
+
     # message-level tool_time accumulation
     msg_tool_time: dict[str, int] = {mid: 0 for mid in message_order}
 
@@ -355,15 +373,22 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
         if p.started_ms is not None and p.ended_ms is not None:
             duration = max(0, p.ended_ms - p.started_ms)
             covered.append((p.started_ms, p.ended_ms))
+        elif p.started_ms is not None and last_observed_ms is not None:
+            covered.append((p.started_ms, max(p.started_ms, last_observed_ms)))
         if p.type == "tool":
             tool_calls += 1
             if p.status == "error":
                 tool_errors += 1
             if p.message_id and duration:
                 msg_tool_time[p.message_id] = msg_tool_time.get(p.message_id, 0) + duration
-        output_bytes = len(p.output_text.encode("utf-8")) if p.output_text else None
-        output_tokens_est = estimate_tokens(p.output_text) if p.output_text else None
-        part_rows.append((p, duration, output_bytes, output_tokens_est))
+        # text/reasoning parts carry their content in p.text, not p.output_text - falling
+        # back to it here is what makes them show up at all in "what's filling up context"
+        # (they used to contribute nothing, same blind spot as tool call arguments below).
+        content_text = p.output_text or p.text
+        output_bytes = len(content_text.encode("utf-8")) if content_text else None
+        output_tokens_est = estimate_tokens(content_text) if content_text else None
+        input_tokens_est = estimate_tokens(json.dumps(p.input, ensure_ascii=False)) if p.input else None
+        part_rows.append((p, duration, output_bytes, output_tokens_est, input_tokens_est))
 
     session_tokens = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
     for mid in message_order:
@@ -376,6 +401,8 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
             # step-start/step-finish carry no time field at all) - part
             # intervals are a subset of this and merge_intervals() dedupes.
             covered.append((m.started_ms, m.completed_ms))
+        elif m.started_ms is not None and last_observed_ms is not None:
+            covered.append((m.started_ms, max(m.started_ms, last_observed_ms)))
         tool_time = msg_tool_time.get(mid, 0)
         model_time = max(0, elapsed - tool_time) if elapsed is not None else None
         for k in session_tokens:
@@ -410,13 +437,13 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
             ),
         )
 
-    for p, duration, output_bytes, output_tokens_est in part_rows:
+    for p, duration, output_bytes, output_tokens_est, input_tokens_est in part_rows:
         conn.execute(
             """
             INSERT INTO parts (id, message_id, session_id, seq, type, started_at, ended_at, duration_ms,
                                 tool_name, call_id, status, title, error, text, input_json, output_text,
-                                output_bytes, output_tokens_est, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                output_bytes, output_tokens_est, input_tokens_est, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 p.id,
@@ -437,6 +464,7 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
                 p.output_text,
                 output_bytes,
                 output_tokens_est,
+                input_tokens_est,
                 json.dumps(p.metadata, ensure_ascii=False) if p.metadata is not None else None,
             ),
         )
@@ -476,7 +504,7 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
     duration_ms = None
     unaccounted_ms = None
     for turn_mids in turns:
-        span = _turn_span(turn_mids, messages)
+        span = _turn_span(turn_mids, messages, last_observed_ms)
         if span is None:
             continue
         turn_start, turn_end = span

@@ -4,6 +4,8 @@ import json
 import sqlite3
 from collections import defaultdict
 
+from .redact import load_patterns, redact_value
+
 
 def _truncate(text: str | None, limit: int) -> str:
     if not text:
@@ -23,7 +25,20 @@ def _fmt_ms(ms: int | None) -> str:
     return f"{int(minutes)}:{sec:04.1f}"
 
 
-def build_markdown(conn: sqlite3.Connection, session_id: str, limit: int = 1500) -> str | None:
+def build_markdown(
+    conn: sqlite3.Connection,
+    session_id: str,
+    limit: int = 1500,
+    redact: bool = False,
+    include_children: bool = False,
+    _depth: int = 0,
+) -> str | None:
+    """Redaction is opt-in and applied only here, at export time - never at ingest (see
+    viewer/ingest.py) - so it never touches what's stored or displayed elsewhere, only the
+    copy/download the caller explicitly asked to have scrubbed. `include_children` pulls in
+    each direct subagent session's own export as a nested section, one level deep only
+    (`_depth` guards against a child that also requests children, keeping this to parent+kids
+    rather than the whole tree)."""
     session = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     if not session:
         return None
@@ -33,10 +48,17 @@ def build_markdown(conn: sqlite3.Connection, session_id: str, limit: int = 1500)
     detections = [dict(r) for r in conn.execute("SELECT * FROM detections WHERE session_id = ? ORDER BY level", (session_id,))]
     todos = [dict(r) for r in conn.execute("SELECT * FROM todo_snapshots WHERE session_id = ? ORDER BY id", (session_id,))]
 
+    patterns = load_patterns(conn) if redact else []
+
+    def scrub(text: str | None) -> str | None:
+        if not redact or not text or not patterns:
+            return text
+        return redact_value(text, patterns)
+
     lines: list[str] = []
     lines.append(f"# Сессия {session_id}")
     lines.append("")
-    lines.append(f"**{session.get('title') or '(без названия)'}**")
+    lines.append(f"**{scrub(session.get('title')) or '(без названия)'}**")
     lines.append("")
     lines.append("## Сводка")
     lines.append("")
@@ -125,16 +147,32 @@ def build_markdown(conn: sqlite3.Connection, session_id: str, limit: int = 1500)
         lines.append(f"_{p.get('status') or ''} · {_fmt_ms(p['duration_ms'])}_")
         if p.get("input_json"):
             lines.append("```json")
-            lines.append(_truncate(p["input_json"], limit))
+            lines.append(_truncate(scrub(p["input_json"]), limit))
             lines.append("```")
         if p.get("text"):
-            lines.append(_truncate(p["text"], limit))
+            lines.append(_truncate(scrub(p["text"]), limit))
         if p.get("output_text"):
             lines.append("```")
-            lines.append(_truncate(p["output_text"], limit))
+            lines.append(_truncate(scrub(p["output_text"]), limit))
             lines.append("```")
         if p.get("error"):
-            lines.append(f"**Ошибка:** {p['error']}")
+            lines.append(f"**Ошибка:** {scrub(p['error'])}")
         lines.append("")
+
+    if include_children and _depth == 0:
+        children = conn.execute(
+            "SELECT id, title, agent FROM sessions WHERE parent_id = ? ORDER BY created_at", (session_id,)
+        ).fetchall()
+        for c in children:
+            lines.append("---")
+            lines.append("")
+            lines.append(f"## Субагент: {c['agent'] or '?'} — {c['title'] or c['id']}")
+            lines.append("")
+            child_md = build_markdown(conn, c["id"], limit=limit, redact=redact, include_children=False, _depth=_depth + 1)
+            if child_md:
+                lines.append(child_md)
+            else:
+                lines.append("_(дочерняя сессия не найдена)_")
+            lines.append("")
 
     return "\n".join(lines)

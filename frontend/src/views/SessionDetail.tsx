@@ -86,15 +86,37 @@ function DetectionCard({ d, locale }: { d: Detection; locale: Locale }) {
   )
 }
 
+function SubagentLink({ part }: { part: Part }) {
+  const { t } = useLocale()
+  if (part.type !== "subtask") return null
+  if (!part.linked_session_id) {
+    return (
+      <div className="subagent-link subagent-link-missing" onClick={(e) => e.stopPropagation()}>
+        {t("feed.subagent_not_found")}
+      </div>
+    )
+  }
+  return (
+    <div className="subagent-link" onClick={(e) => e.stopPropagation()}>
+      <a href={`#/sessions/${part.linked_session_id}`} target="_blank" rel="noopener">
+        {t("feed.open_subagent_session")}
+      </a>
+      {part.linked_session_match === "heuristic" && (
+        <span className="info-toggle" title={t("feed.subagent_link_heuristic_hint")}>
+          ⓘ
+        </span>
+      )}
+    </div>
+  )
+}
+
 function PartRow({
   part,
   softFailure,
-  onOpenSession,
   onShowFull,
 }: {
   part: Part
   softFailure: boolean
-  onOpenSession: (id: string) => void
   onShowFull: (title: string, value: string) => void
 }) {
   const { t } = useLocale()
@@ -122,6 +144,7 @@ function PartRow({
         <span className="feed-duration">{fmtMs(part.duration_ms)}</span>
         {part.output_tokens_est ? <span className="muted">≈{part.output_tokens_est} ток</span> : null}
       </div>
+      <SubagentLink part={part} />
       {open && (
         <div className="feed-detail">
           {part.text && (
@@ -148,11 +171,6 @@ function PartRow({
           {part.error && (
             <div className="error-text">
               {t("feed.error_label")} {part.error}
-            </div>
-          )}
-          {part.linked_session_id && (
-            <div>
-              <button onClick={() => onOpenSession(part.linked_session_id!)}>{t("feed.open_subagent_session")}</button>
             </div>
           )}
         </div>
@@ -185,16 +203,21 @@ function StepGroup({
   message,
   parts,
   softFailureIds,
-  onOpenSession,
   onShowFull,
+  allMessages,
+  allParts,
+  contextSnapshots,
 }: {
   message: Message | null
   parts: Part[]
   softFailureIds: Set<string>
-  onOpenSession: (id: string) => void
   onShowFull: (title: string, value: string) => void
+  allMessages: Message[]
+  allParts: Part[]
+  contextSnapshots: ContextSnapshot[]
 }) {
   const { t } = useLocale()
+  const start = parts.find((p) => p.type === "step-start")
   const finish = parts.find((p) => p.type === "step-finish")
   const finishMeta = finish?.metadata_json ? JSON.parse(finish.metadata_json) : null
   const bodyParts = parts.filter((p) => p.type !== "step-start" && p.type !== "step-finish")
@@ -206,10 +229,13 @@ function StepGroup({
           {t("feed.step_label")} {message?.seq ?? "?"}
           {message?.role ? ` · ${message.role}` : ""}
           {message?.elapsed_ms != null ? ` · ${fmtMs(message.elapsed_ms)}` : ""}
+          {start?.started_at && ` · ${t("feed.step_started_at")} ${new Date(start.started_at).toLocaleTimeString()}`}
         </span>
-        {finishMeta && (
+        {finish && (
           <span className="muted">
-            {t("feed.finish_label")}: {finishMeta.reason || "?"} · +{finishMeta.tokens_output ?? 0} {t("feed.finish_output_suffix")}
+            {finishMeta
+              ? `${t("feed.finish_label")}: ${finishMeta.reason || "?"} · +${finishMeta.tokens_output ?? 0} ${t("feed.finish_output_suffix")}`
+              : t("feed.finish_no_metadata")}
           </span>
         )}
       </div>
@@ -217,11 +243,12 @@ function StepGroup({
         {bodyParts.length === 0 ? (
           <div className="muted">—</div>
         ) : (
-          bodyParts.map((p) => (
-            <PartRow key={p.id} part={p} softFailure={softFailureIds.has(p.id)} onOpenSession={onOpenSession} onShowFull={onShowFull} />
-          ))
+          bodyParts.map((p) => <PartRow key={p.id} part={p} softFailure={softFailureIds.has(p.id)} onShowFull={onShowFull} />)
         )}
       </div>
+      {message?.role === "assistant" && (
+        <StepContextToggle messageId={message.id} messages={allMessages} parts={allParts} contextSnapshots={contextSnapshots} />
+      )}
     </div>
   )
 }
@@ -326,47 +353,143 @@ function Waterfall({ messages, parts }: { messages: Message[]; parts: Part[] }) 
   )
 }
 
+interface ContextBreakdownData {
+  selectedMessage: Message | undefined
+  exactSnapshot: ContextSnapshot | null
+  breakdown: [string, { tokens: number; inputTokens: number; bytes: number; cleared: number }][]
+  knownTokens: number
+  systemTokensEst: number
+  reportedTokens: number | null
+  remainder: number | null
+}
+
+/** Shared by the full session-wide ContextGrowth section and the per-step inline toggle in
+ * StepGroup, so "what's occupying context" always means the same thing wherever it's shown. */
+function computeContextBreakdown(selectedId: string | null, messages: Message[], parts: Part[], contextSnapshots: ContextSnapshot[]): ContextBreakdownData {
+  const eligibleMessageIds = (() => {
+    if (!selectedId) return new Set<string>()
+    const idx = messages.findIndex((m) => m.id === selectedId)
+    return new Set(messages.slice(0, idx + 1).map((m) => m.id))
+  })()
+
+  let exactSnapshot: ContextSnapshot | null = null
+  for (const s of contextSnapshots) {
+    if (s.message_id && eligibleMessageIds.has(s.message_id)) exactSnapshot = s
+  }
+
+  const map = new Map<string, { tokens: number; inputTokens: number; bytes: number; cleared: number }>()
+  for (const p of parts) {
+    if (!p.message_id || !eligibleMessageIds.has(p.message_id)) continue
+    const isContentPart = p.type === "tool" || p.type === "text" || p.type === "reasoning"
+    if (!isContentPart) continue
+    const isCleared = !!p.output_text?.includes(CLEARED_MARKER)
+    const key = p.type === "tool" ? p.tool_name || "?" : p.type
+    const entry = map.get(key) || { tokens: 0, inputTokens: 0, bytes: 0, cleared: 0 }
+    if (isCleared) entry.cleared += p.output_tokens_est || 0
+    else {
+      entry.tokens += p.output_tokens_est || 0
+      entry.bytes += p.output_bytes || 0
+    }
+    entry.inputTokens += p.input_tokens_est || 0
+    map.set(key, entry)
+  }
+  const breakdown = Array.from(map.entries()).sort((a, b) => b[1].tokens + b[1].inputTokens - (a[1].tokens + a[1].inputTokens))
+
+  const selectedMessage = messages.find((m) => m.id === selectedId)
+  const knownContentTokens = breakdown.reduce((sum, [, b]) => sum + b.tokens + b.inputTokens, 0)
+  // system_chars is a bare count from the plugin (no text to inspect for cyrillic-vs-latin
+  // mix, unlike viewer/tokenest.py's estimate_tokens) - 3.5 is a rough middle constant
+  // between that function's two ratios, good enough for a number we already label "≈".
+  const systemTokensEst = exactSnapshot ? Math.round(exactSnapshot.system_chars / 3.5) : 0
+  const knownTokens = knownContentTokens + systemTokensEst
+  const reportedTokens = selectedMessage?.tokens_input ?? null
+  const remainder = reportedTokens != null ? reportedTokens - knownTokens : null
+
+  return { selectedMessage, exactSnapshot, breakdown, knownTokens, systemTokensEst, reportedTokens, remainder }
+}
+
+function ContextBreakdownView({ data }: { data: ContextBreakdownData }) {
+  const { t } = useLocale()
+  const { exactSnapshot, breakdown, knownTokens, systemTokensEst, reportedTokens, remainder } = data
+
+  return (
+    <div>
+      {exactSnapshot ? (
+        <div className="detection-card">
+          <span className="badge badge-info">{t("context_growth.exact_badge")}</span>
+          <p>
+            {t("context_growth.reported_by_model")}: {reportedTokens ?? "?"} · system_chars={exactSnapshot.system_chars} · total_chars=
+            {exactSnapshot.total_chars}
+          </p>
+        </div>
+      ) : (
+        <p className="muted">{t("context_growth.no_snapshot_hint")}</p>
+      )}
+
+      <p className="muted">
+        {t("context_growth.known_from_outputs")}: ≈{knownTokens}
+        {exactSnapshot ? ` (${t("context_growth.system_estimate")}: ≈${systemTokensEst})` : ""} · {t("context_growth.reported_by_model")}:{" "}
+        {reportedTokens ?? "?"}
+        {!exactSnapshot && ` (${t("context_growth.estimate_badge")})`}
+      </p>
+      {remainder != null && remainder > 0 && (
+        <p className="muted">
+          {t("context_growth.remainder_label")}: ≈{remainder}
+        </p>
+      )}
+
+      {breakdown.length === 0 ? (
+        <p className="muted">{t("context_attrib.empty")}</p>
+      ) : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>{t("tools.col_tool")}</th>
+              <th>{t("tools.col_tokens_est")}</th>
+              <th>{t("context_growth.input_tokens_label")}</th>
+              <th>{t("context_growth.cleared_label")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map(([name, b]) => (
+              <tr key={name}>
+                <td>{name}</td>
+                <td>
+                  ≈{b.tokens} ({fmtBytes(b.bytes, t)})
+                </td>
+                <td>{b.inputTokens > 0 ? `≈${b.inputTokens}` : "—"}</td>
+                <td>{b.cleared > 0 ? `≈${b.cleared}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+function StepContextToggle({ messageId, messages, parts, contextSnapshots }: { messageId: string; messages: Message[]; parts: Part[]; contextSnapshots: ContextSnapshot[] }) {
+  const { t } = useLocale()
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="step-context-toggle">
+      <button className="button-link" onClick={() => setOpen((v) => !v)}>
+        {t("feed.context_at_this_step")}
+      </button>
+      {open && <ContextBreakdownView data={computeContextBreakdown(messageId, messages, parts, contextSnapshots)} />}
+    </div>
+  )
+}
+
 function ContextGrowth({ messages, parts, contextSnapshots }: { messages: Message[]; parts: Part[]; contextSnapshots: ContextSnapshot[] }) {
   const { t } = useLocale()
   const assistantSteps = useMemo(() => messages.filter((m) => m.role === "assistant"), [messages])
   const [selectedId, setSelectedId] = useState<string | null>(assistantSteps.length ? assistantSteps[assistantSteps.length - 1].id : null)
   const maxInput = Math.max(1, ...assistantSteps.map((m) => m.tokens_input))
 
-  const eligibleMessageIds = useMemo(() => {
-    if (!selectedId) return new Set<string>()
-    const idx = messages.findIndex((m) => m.id === selectedId)
-    return new Set(messages.slice(0, idx + 1).map((m) => m.id))
-  }, [selectedId, messages])
-
-  const exactSnapshot = useMemo(() => {
-    let best: ContextSnapshot | null = null
-    for (const s of contextSnapshots) {
-      if (s.message_id && eligibleMessageIds.has(s.message_id)) best = s
-    }
-    return best
-  }, [contextSnapshots, eligibleMessageIds])
-
-  const breakdown = useMemo(() => {
-    const map = new Map<string, { tokens: number; bytes: number; cleared: number }>()
-    for (const p of parts) {
-      if (p.type !== "tool" || !p.message_id || !eligibleMessageIds.has(p.message_id)) continue
-      const isCleared = !!p.output_text?.includes(CLEARED_MARKER)
-      const key = p.tool_name || "?"
-      const entry = map.get(key) || { tokens: 0, bytes: 0, cleared: 0 }
-      if (isCleared) entry.cleared += p.output_tokens_est || 0
-      else {
-        entry.tokens += p.output_tokens_est || 0
-        entry.bytes += p.output_bytes || 0
-      }
-      map.set(key, entry)
-    }
-    return Array.from(map.entries()).sort((a, b) => b[1].tokens - a[1].tokens)
-  }, [eligibleMessageIds, parts])
+  const data = useMemo(() => computeContextBreakdown(selectedId, messages, parts, contextSnapshots), [selectedId, messages, parts, contextSnapshots])
 
   if (assistantSteps.length === 0) return <p className="muted">{t("context_attrib.empty")}</p>
-
-  const selectedMessage = messages.find((m) => m.id === selectedId)
-  const knownTokens = breakdown.reduce((sum, [, b]) => sum + b.tokens, 0)
 
   return (
     <div>
@@ -388,51 +511,9 @@ function ContextGrowth({ messages, parts, contextSnapshots }: { messages: Messag
       {selectedId && (
         <div>
           <h3>
-            {t("context_growth.breakdown_title")} #{selectedMessage?.seq}
+            {t("context_growth.breakdown_title")} #{data.selectedMessage?.seq}
           </h3>
-
-          {exactSnapshot ? (
-            <div className="detection-card">
-              <span className="badge badge-info">{t("context_growth.exact_badge")}</span>
-              <p>
-                {t("context_growth.reported_by_model")}: {selectedMessage?.tokens_input ?? "?"} · system_chars={exactSnapshot.system_chars} ·
-                total_chars={exactSnapshot.total_chars}
-              </p>
-            </div>
-          ) : (
-            <p className="muted">{t("context_growth.no_snapshot_hint")}</p>
-          )}
-
-          <p className="muted">
-            {t("context_growth.known_from_outputs")}: ≈{knownTokens} · {t("context_growth.reported_by_model")}:{" "}
-            {selectedMessage?.tokens_input ?? "?"}
-            {!exactSnapshot && ` (${t("context_growth.estimate_badge")})`}
-          </p>
-
-          {breakdown.length === 0 ? (
-            <p className="muted">{t("context_attrib.empty")}</p>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{t("tools.col_tool")}</th>
-                  <th>{t("tools.col_tokens_est")}</th>
-                  <th>{t("context_growth.cleared_label")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {breakdown.map(([name, b]) => (
-                  <tr key={name}>
-                    <td>{name}</td>
-                    <td>
-                      ≈{b.tokens} ({fmtBytes(b.bytes, t)})
-                    </td>
-                    <td>{b.cleared > 0 ? `≈${b.cleared}` : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <ContextBreakdownView data={data} />
         </div>
       )}
     </div>
@@ -455,6 +536,8 @@ export default function SessionDetail({
   const [error, setError] = useState<string | null>(null)
   const [toolFilter, setToolFilter] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
+  const [copyRedact, setCopyRedact] = useState(false)
+  const [copyIncludeChildren, setCopyIncludeChildren] = useState(false)
   const [connected, setConnected] = useState(true)
   const [fullValue, setFullValue] = useState<{ title: string; value: string } | null>(null)
   const [notes, setNotes] = useState("")
@@ -489,7 +572,7 @@ export default function SessionDetail({
   if (error) return <div className="error-text">{error}</div>
   if (!data) return <div className="center-message">{t("common.loading")}</div>
 
-  const { session, messages, parts, detections, todo_snapshots, context_snapshots, tool_stats, context_attribution } = data
+  const { session, messages, parts, detections, todo_snapshots, context_snapshots, tool_stats, context_attribution, children } = data
   const visibleParts = toolFilter ? parts.filter((p) => p.tool_name === toolFilter) : parts
   const stepGroups = groupPartsByMessage(visibleParts, messages)
 
@@ -502,7 +585,7 @@ export default function SessionDetail({
   )
 
   async function copyFullLog() {
-    const md = await api.exportMarkdown(sessionId)
+    const md = await api.exportMarkdown(sessionId, { redact: copyRedact, includeChildren: copyIncludeChildren })
     const filename = `${sessionId}.md`
     try {
       if (!window.isSecureContext || !navigator.clipboard) throw new Error("insecure context")
@@ -565,8 +648,22 @@ export default function SessionDetail({
       <div className="toolbar">
         <button onClick={onBack}>{t("common.back")}</button>
         <div className="spacer" />
+        <label className="checkbox-label">
+          <input type="checkbox" checked={copyRedact} onChange={(e) => setCopyRedact(e.target.checked)} />
+          {t("session.copy_redact_toggle")}
+        </label>
+        {children.length > 0 && (
+          <label className="checkbox-label">
+            <input type="checkbox" checked={copyIncludeChildren} onChange={(e) => setCopyIncludeChildren(e.target.checked)} />
+            {t("session.copy_include_children_toggle")}
+          </label>
+        )}
         <button onClick={copyFullLog}>{t("session.copy_full_log")}</button>
-        <a className="button-link" href={api.exportUrl(sessionId)} download={`${sessionId}.md`}>
+        <a
+          className="button-link"
+          href={api.exportUrl(sessionId, { redact: copyRedact, includeChildren: copyIncludeChildren })}
+          download={`${sessionId}.md`}
+        >
           {t("session.download_md")}
         </a>
       </div>
@@ -768,8 +865,10 @@ export default function SessionDetail({
                   message={g.message}
                   parts={g.parts}
                   softFailureIds={softFailureIds}
-                  onOpenSession={onOpenSession}
                   onShowFull={(title, value) => setFullValue({ title, value })}
+                  allMessages={messages}
+                  allParts={parts}
+                  contextSnapshots={context_snapshots}
                 />
               ))}
             </div>

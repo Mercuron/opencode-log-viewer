@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .config import Settings
-from .redact import load_patterns, redact_value
 from .indexer import reindex_session
 
 REQUIRED_FIELDS = ["schema_version", "event_id", "source_id", "source_name", "sequence", "event_type", "observed_at", "context", "payload"]
@@ -65,7 +64,6 @@ def write_batch(conn: sqlite3.Connection, events: list[dict], settings: Settings
     result = BatchResult()
     now = datetime.now(UTC).isoformat()
     touched_sessions: set[str] = set()
-    patterns = load_patterns(conn)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -76,7 +74,11 @@ def write_batch(conn: sqlite3.Connection, events: list[dict], settings: Settings
                 result.errors.append({"event_id": event.get("event_id"), "error": error})
                 continue
 
-            payload = redact_value(event["payload"], patterns)
+            # Payload is stored exactly as received - redaction is opt-in and applied only at
+            # export time (see viewer/export.py::build_markdown), never at rest, per explicit
+            # user decision that ingest-time redaction was silently destroying legitimate data
+            # (GUIDs, long MCP tool names) with no way to recover it.
+            payload = event["payload"]
             session_id = event.get("session_id")
 
             _upsert_source(conn, event, now)

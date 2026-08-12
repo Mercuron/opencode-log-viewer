@@ -59,6 +59,8 @@ const dict = {
 
     "session.copy_full_log": "Скопировать полный лог",
     "session.download_md": "Скачать .md",
+    "session.copy_redact_toggle": "с цензурой",
+    "session.copy_include_children_toggle": "+ субагенты",
     "session.copied": "Скопировано в буфер обмена",
     "session.notes_label": "Заметка",
     "session.notes_placeholder": "Добавить заметку к сессии…",
@@ -129,7 +131,12 @@ const dict = {
     "feed.error_label": "Ошибка:",
     "feed.step_label": "Шаг",
     "feed.finish_label": "финиш",
-    "feed.open_subagent_session": "→ Открыть сессию разведчика",
+    "feed.open_subagent_session": "→ Субагент: открыть сессию в новой вкладке",
+    "feed.subagent_not_found": "→ Субагент вызван, но дочерняя сессия не найдена",
+    "feed.subagent_link_heuristic_hint": "Связь с дочерней сессией найдена эвристически (по имени агента и порядку), не по точному id",
+    "feed.step_started_at": "начало",
+    "feed.finish_no_metadata": "шаг завершён (без метаданных)",
+    "feed.context_at_this_step": "Контекст на этот момент",
 
     "settings.title": "Настройки",
     "settings.import_title": "Импорт уже существующих сессий",
@@ -166,10 +173,13 @@ const dict = {
     "context_growth.reported_by_model": "Заявлено моделью (input)",
     "context_growth.no_snapshot_hint":
       "Для этого шага нет точного снимка от плагина — показана оценка по сохранённым выводам инструментов, она всегда меньше реального размера (не видит системный промпт и инструкции).",
+    "context_growth.system_estimate": "≈ системный промпт",
+    "context_growth.input_tokens_label": "аргументы вызова",
+    "context_growth.remainder_label": "неизвестный остаток",
 
-    "settings.redact_title": "Редакция данных",
+    "settings.redact_title": "Редакция данных (только для копирования)",
     "settings.redact_body":
-      "Эти правила (регулярные выражения) применяются ко всем входящим событиям до записи на диск. Изменения действуют только на новые события — уже отредактированные данные восстановить нельзя.",
+      "Эти правила больше не применяются к входящим/сохранённым данным — сессии всегда хранятся и отображаются как есть. Правила используются только когда вы явно выбираете «Скопировать с цензурой» при экспорте сессии.",
     "settings.redact_guid_hint":
       "GUID-подобные строки (8-4-4-4-12 через дефис) могут случайно попадать под правило «32+ символов» — отключите его ниже, если это мешает.",
     "settings.redact_col_pattern": "Правило",
@@ -191,6 +201,15 @@ const dict = {
     "settings.storage_delete_button": "Удалить эти сессии",
     "settings.storage_delete_confirm": "Удалить безвозвратно? Это действие нельзя отменить.",
     "settings.storage_deleted": "Удалено сессий",
+
+    "settings.merge_title": "Объединить источники",
+    "settings.merge_body":
+      "Если один и тот же агент показывается как несколько разных источников (например, после того как у него сменился идентификатор при пересоздании контейнера) — перенесите его сессии и события в один источник.",
+    "settings.merge_from_label": "Откуда (будет удалён)",
+    "settings.merge_into_label": "Куда",
+    "settings.merge_button": "Объединить",
+    "settings.merge_confirm": "Все сессии и события источника «откуда» будут перенесены в источник «куда», а сам источник удалён. Продолжить?",
+    "settings.merge_result": "Перенесено сессий / событий",
   },
   en: {
     "nav.sources": "Agents",
@@ -241,6 +260,8 @@ const dict = {
 
     "session.copy_full_log": "Copy full log",
     "session.download_md": "Download .md",
+    "session.copy_redact_toggle": "redacted",
+    "session.copy_include_children_toggle": "+ subagents",
     "session.copied": "Copied to clipboard",
     "session.notes_label": "Note",
     "session.notes_placeholder": "Add a note to this session…",
@@ -311,7 +332,12 @@ const dict = {
     "feed.error_label": "Error:",
     "feed.step_label": "Step",
     "feed.finish_label": "finished",
-    "feed.open_subagent_session": "→ Open scout session",
+    "feed.open_subagent_session": "→ Subagent: open session in a new tab",
+    "feed.subagent_not_found": "→ Subagent was called, but no matching child session was found",
+    "feed.subagent_link_heuristic_hint": "Linked to the child session heuristically (by agent name and order), not by an exact id",
+    "feed.step_started_at": "started",
+    "feed.finish_no_metadata": "step finished (no metadata)",
+    "feed.context_at_this_step": "Context at this step",
 
     "settings.title": "Settings",
     "settings.import_title": "Import existing sessions",
@@ -348,10 +374,13 @@ const dict = {
     "context_growth.reported_by_model": "Reported by the model (input)",
     "context_growth.no_snapshot_hint":
       "No exact snapshot from the plugin for this step - showing an estimate from stored tool outputs, which always understates the real size (it can't see the system prompt or instructions).",
+    "context_growth.system_estimate": "≈ system prompt",
+    "context_growth.input_tokens_label": "call arguments",
+    "context_growth.remainder_label": "unexplained remainder",
 
-    "settings.redact_title": "Data redaction",
+    "settings.redact_title": "Data redaction (copy-time only)",
     "settings.redact_body":
-      "These rules (regular expressions) apply to every incoming event before it's written to disk. Changes only affect new events - already-redacted data can't be recovered.",
+      "These rules no longer touch incoming/stored data - sessions are always stored and shown exactly as received. They're applied only when you explicitly choose \"Copy redacted\" when exporting a session.",
     "settings.redact_guid_hint":
       "GUID-shaped strings (8-4-4-4-12 with hyphens) can accidentally match the \"32+ characters\" rule below - disable it if that gets in the way.",
     "settings.redact_col_pattern": "Rule",
@@ -373,6 +402,15 @@ const dict = {
     "settings.storage_delete_button": "Delete these sessions",
     "settings.storage_delete_confirm": "Delete permanently? This cannot be undone.",
     "settings.storage_deleted": "Sessions deleted",
+
+    "settings.merge_title": "Merge sources",
+    "settings.merge_body":
+      "If the same agent shows up as several different sources (e.g. its identity changed when its container was recreated), move its sessions and events into a single source.",
+    "settings.merge_from_label": "From (will be deleted)",
+    "settings.merge_into_label": "Into",
+    "settings.merge_button": "Merge",
+    "settings.merge_confirm": "All sessions and events from the \"from\" source will be moved into the \"into\" source, and the \"from\" source deleted. Continue?",
+    "settings.merge_result": "Sessions / events moved",
   },
 } as const
 

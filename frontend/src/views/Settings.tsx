@@ -1,7 +1,83 @@
 import { useEffect, useState } from "react"
-import { api, ApiError, RedactPattern } from "../api"
+import { api, ApiError, RedactPattern, Source } from "../api"
 import { useLocale } from "../i18n"
 import { fmtBytes } from "../format"
+
+function MergeSourcesSection() {
+  const { t } = useLocale()
+  const [sources, setSources] = useState<Source[] | null>(null)
+  const [fromId, setFromId] = useState("")
+  const [intoId, setIntoId] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ sessions_moved: number; events_moved: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  function reload() {
+    api.sources().then(setSources)
+  }
+
+  useEffect(reload, [])
+
+  async function merge() {
+    if (!fromId || !intoId || fromId === intoId) return
+    if (!window.confirm(t("settings.merge_confirm"))) return
+    setBusy(true)
+    setError(null)
+    setResult(null)
+    try {
+      setResult(await api.mergeSources(fromId, intoId))
+      setFromId("")
+      setIntoId("")
+      reload()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!sources || sources.length < 2) return null
+
+  return (
+    <section className="settings-card">
+      <h2>{t("settings.merge_title")}</h2>
+      <p>{t("settings.merge_body")}</p>
+      <div className="settings-form">
+        <label>
+          {t("settings.merge_from_label")}
+          <select value={fromId} onChange={(e) => setFromId(e.target.value)}>
+            <option value="" />
+            {sources.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.display_name || s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("settings.merge_into_label")}
+          <select value={intoId} onChange={(e) => setIntoId(e.target.value)}>
+            <option value="" />
+            {sources.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.display_name || s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button onClick={merge} disabled={busy || !fromId || !intoId || fromId === intoId}>
+          {t("settings.merge_button")}
+        </button>
+      </div>
+      {result && (
+        <div className="toast toast-success">
+          {t("settings.merge_result")}: {result.sessions_moved} / {result.events_moved}
+        </div>
+      )}
+      {error && <div className="error-text">{error}</div>}
+    </section>
+  )
+}
 
 function RedactPatternsSection() {
   const { t } = useLocale()
@@ -218,6 +294,7 @@ export default function Settings() {
 
       <RedactPatternsSection />
       <StorageSection />
+      <MergeSourcesSection />
     </div>
   )
 }

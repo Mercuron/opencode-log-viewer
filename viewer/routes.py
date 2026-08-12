@@ -133,6 +133,20 @@ async def list_sources(request: Request):
     return [dict(r) for r in rows]
 
 
+class RenameSourceBody(BaseModel):
+    display_name: str | None = None
+
+
+@router.patch("/sources/{source_id}")
+async def rename_source(source_id: str, body: RenameSourceBody, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cur = conn.execute("UPDATE sources SET display_name = ? WHERE id = ?", (body.display_name, source_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="source not found")
+    return {"status": "ok"}
+
+
 # ------------------------------------------------------------- sessions --
 
 @router.get("/sessions")
@@ -202,7 +216,9 @@ async def get_session(session_id: str, request: Request):
     parts = conn.execute("SELECT * FROM parts WHERE session_id = ? ORDER BY seq", (session_id,)).fetchall()
     detections = conn.execute("SELECT * FROM detections WHERE session_id = ? ORDER BY level", (session_id,)).fetchall()
     todos = conn.execute("SELECT * FROM todo_snapshots WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
-    children = conn.execute("SELECT id, title, status FROM sessions WHERE parent_id = ?", (session_id,)).fetchall()
+    children = conn.execute(
+        "SELECT id, title, status, agent, created_at FROM sessions WHERE parent_id = ? ORDER BY created_at", (session_id,)
+    ).fetchall()
     inference = conn.execute("SELECT * FROM inference_spans WHERE session_id = ?", (session_id,)).fetchall()
 
     tool_stats: dict[str, dict] = {}
@@ -226,10 +242,36 @@ async def get_session(session_id: str, request: Request):
         {"seq": m["seq"], "tokens_input": m["tokens_input"], "message_id": m["id"]} for m in messages if m["role"] == "assistant"
     ]
 
+    # Best-effort link from a `task` call (a "subtask" part) to the child
+    # session it spawned. Nothing in the event stream names that child
+    # session directly, so this pairs subtask parts and same-agent children
+    # in chronological order within each agent group - correct as long as
+    # subagents of the same name run sequentially, not concurrently (true
+    # for this deployment, not guaranteed in general). Never claimed as
+    # exact: exposed as {"match": "heuristic"}.
+    part_rows = [dict(p) for p in parts]
+    children_by_agent: dict[str, list[dict]] = {}
+    for c in children:
+        children_by_agent.setdefault(c["agent"] or "", []).append(dict(c))
+    subtask_seen: dict[str, int] = {}
+    for p in part_rows:
+        if p["type"] != "subtask" or not p.get("input_json"):
+            continue
+        try:
+            agent_name = json.loads(p["input_json"]).get("agent")
+        except (json.JSONDecodeError, AttributeError):
+            agent_name = None
+        candidates = children_by_agent.get(agent_name or "", [])
+        idx = subtask_seen.get(agent_name or "", 0)
+        if agent_name and idx < len(candidates):
+            p["linked_session_id"] = candidates[idx]["id"]
+            p["linked_session_match"] = "heuristic"
+            subtask_seen[agent_name or ""] = idx + 1
+
     return {
         "session": dict(session),
         "messages": [dict(m) for m in messages],
-        "parts": [dict(p) for p in parts],
+        "parts": part_rows,
         "detections": [dict(d) for d in detections],
         "todo_snapshots": [dict(t) for t in todos],
         "children": [dict(c) for c in children],
@@ -238,6 +280,20 @@ async def get_session(session_id: str, request: Request):
         "context_attribution": context_attribution,
         "context_growth": context_growth,
     }
+
+
+class UpdateSessionBody(BaseModel):
+    notes: str | None = None
+
+
+@router.patch("/sessions/{session_id}")
+async def update_session(session_id: str, body: UpdateSessionBody, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cur = conn.execute("UPDATE sessions SET notes = ? WHERE id = ?", (body.notes, session_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"status": "ok"}
 
 
 @router.get("/sessions/{session_id}/export")

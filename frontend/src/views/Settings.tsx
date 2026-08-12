@@ -1,11 +1,13 @@
 import { useState } from "react"
 import { api, ApiError } from "../api"
+import { useLocale } from "../i18n"
 
 export default function Settings() {
+  const { t } = useLocale()
   const [path, setPath] = useState("/import/opencode")
   const [sourceName, setSourceName] = useState("")
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<string | null>(null)
+  const [result, setResult] = useState<{ accepted: number; duplicates: number; rejected: number; sessions_touched: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function runImport(e: React.FormEvent) {
@@ -15,9 +17,7 @@ export default function Settings() {
     setResult(null)
     try {
       const r = await api.importStorage(path, sourceName)
-      setResult(
-        `Готово: принято ${r.accepted} событий, дубликатов ${r.duplicates}, отклонено ${r.rejected}, затронуто сессий: ${r.sessions_touched}.`,
-      )
+      setResult(r)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e))
     } finally {
@@ -27,36 +27,32 @@ export default function Settings() {
 
   return (
     <div>
-      <h1>Настройки</h1>
+      <h1>{t("settings.title")}</h1>
 
       <section className="settings-card">
-        <h2>Импорт уже существующих сессий</h2>
-        <p>
-          Разовое действие: подтягивает историю сессий, которые агент накопил ещё до подключения
-          плагина, из локального хранилища OpenCode. Дальше новые сессии будут появляться сами —
-          повторный запуск с теми же данными безопасен и не создаёт дублей (идемпотентно по
-          <code> event_id</code>).
-        </p>
+        <h2>{t("settings.import_title")}</h2>
+        <p>{t("settings.import_body")}</p>
         <form onSubmit={runImport} className="settings-form">
           <label>
-            Путь к хранилищу OpenCode (примонтирован в контейнер вьювера только на чтение)
+            {t("settings.path_label")}
             <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/import/opencode" required />
           </label>
           <label>
-            Имя источника (как будет называться агент в списке)
+            {t("settings.source_name_label")}
             <input value={sourceName} onChange={(e) => setSourceName(e.target.value)} placeholder="my-agent" required />
           </label>
           <button type="submit" disabled={busy}>
-            {busy ? "Импортирую…" : "Импортировать все существующие сессии"}
+            {busy ? t("settings.importing") : t("settings.import_button")}
           </button>
         </form>
-        {result && <div className="toast toast-success">{result}</div>}
+        {result && (
+          <div className="toast toast-success">
+            {t("settings.result_accepted")}: {result.accepted} · {t("settings.result_duplicates")}: {result.duplicates} ·{" "}
+            {t("settings.result_rejected")}: {result.rejected} · {t("settings.result_sessions")}: {result.sessions_touched}
+          </div>
+        )}
         {error && <div className="error-text">{error}</div>}
-        <p className="muted">
-          Поддерживаются обе раскладки хранилища OpenCode: набор JSON-файлов (
-          <code>storage/session|message|part|todo</code>) и SQLite (<code>opencode.db</code>) — формат
-          определяется автоматически.
-        </p>
+        <p className="muted">{t("settings.layouts_note")}</p>
       </section>
     </div>
   )

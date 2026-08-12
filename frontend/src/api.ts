@@ -26,6 +26,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface Source {
   id: string
   name: string
+  display_name: string | null
   hostname: string | null
   first_seen_at: string
   last_seen_at: string
@@ -62,6 +63,7 @@ export interface Session {
   error_count: number
   unaccounted_ms: number
   imported: number
+  notes: string | null
 }
 
 export interface Message {
@@ -101,6 +103,8 @@ export interface Part {
   output_bytes: number | null
   output_tokens_est: number | null
   metadata_json: string | null
+  linked_session_id?: string
+  linked_session_match?: string
 }
 
 export interface Detection {
@@ -123,7 +127,7 @@ export interface SessionDetail {
   parts: Part[]
   detections: Detection[]
   todo_snapshots: TodoSnapshot[]
-  children: { id: string; title: string | null; status: string | null }[]
+  children: { id: string; title: string | null; status: string | null; agent: string | null; created_at: string | null }[]
   inference_spans: Record<string, unknown>[]
   tool_stats: Record<string, { calls: number; errors: number; total_ms: number; tokens_est: number }>
   context_attribution: { part_id: string; seq: number; tool_name: string | null; output_tokens_est: number }[]
@@ -134,6 +138,10 @@ export const api = {
   login: (password: string) => request<{ status: string }>("/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
   logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
   sources: () => request<Source[]>("/sources"),
+  renameSource: (id: string, displayName: string | null) =>
+    request<{ status: string }>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify({ display_name: displayName }) }),
+  updateSessionNotes: (id: string, notes: string | null) =>
+    request<{ status: string }>(`/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ notes }) }),
   sessions: (params: Record<string, string | undefined> = {}) => {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][])
     const suffix = qs.toString() ? `?${qs.toString()}` : ""

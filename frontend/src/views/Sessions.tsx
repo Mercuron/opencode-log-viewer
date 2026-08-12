@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { api, Session } from "../api"
+import { useLocale } from "../i18n"
 
 function fmtMs(ms: number | null): string {
   if (ms == null) return "?"
@@ -15,6 +16,7 @@ function fmtDate(iso: string | null): string {
 }
 
 export default function Sessions({ sourceId, onOpenSession }: { sourceId: string; onOpenSession: (id: string) => void }) {
+  const { t } = useLocale()
   const [sessions, setSessions] = useState<Session[] | null>(null)
   const [onlyErrors, setOnlyErrors] = useState(false)
   const [q, setQ] = useState("")
@@ -45,7 +47,14 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
         <tr key={s.id} className="clickable-row" onClick={() => onOpenSession(s.id)}>
           <td style={{ paddingLeft: `${depth * 1.5 + 0.5}rem` }}>
             {depth > 0 && "↳ "}
-            {s.title || "(без названия)"}
+            {depth > 0 && s.agent && <span className="subagent-badge">{s.agent}</span>}
+            {s.title || t("sessions.unnamed")}
+            {s.notes && (
+              <span className="muted" title={s.notes}>
+                {" "}
+                📝
+              </span>
+            )}
           </td>
           <td>{fmtDate(s.created_at)}</td>
           <td>{fmtMs(s.duration_ms)}</td>
@@ -55,8 +64,8 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
           </td>
           <td>{s.tool_calls}</td>
           <td>
-            {s.error_count > 0 || s.tool_errors > 0 ? <span className="badge badge-bad">ошибка</span> : null}
-            {s.compactions > 0 ? <span className="badge badge-warn">компакция</span> : null}
+            {s.error_count > 0 || s.tool_errors > 0 ? <span className="badge badge-bad">{t("sessions.badge_error")}</span> : null}
+            {s.compactions > 0 ? <span className="badge badge-warn">{t("sessions.badge_compaction")}</span> : null}
           </td>
         </tr>
         {childrenOf(s.id).map((c) => renderRow(c, depth + 1))}
@@ -67,29 +76,29 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
   return (
     <div>
       <div className="toolbar">
-        <input placeholder="Поиск по заголовку и содержимому…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input placeholder={t("sessions.search_placeholder")} value={q} onChange={(e) => setQ(e.target.value)} />
         <label className="checkbox-label">
           <input type="checkbox" checked={onlyErrors} onChange={(e) => setOnlyErrors(e.target.checked)} />
-          Только с ошибками
+          {t("sessions.only_errors")}
         </label>
       </div>
       {!sessions ? (
-        <div className="center-message">Загрузка…</div>
+        <div className="center-message">{t("common.loading")}</div>
       ) : sessions.length === 0 ? (
         <div className="empty-state">
-          <p>У этого источника пока нет сессий, подходящих под фильтр.</p>
+          <p>{t("sessions.empty")}</p>
         </div>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
-              <th>Сессия</th>
-              <th>Начало</th>
-              <th>Длительность</th>
-              <th>Модель</th>
-              <th>Токены in/out</th>
-              <th>Инструменты</th>
-              <th>Флаги</th>
+              <th>{t("sessions.col_session")}</th>
+              <th>{t("sessions.col_start")}</th>
+              <th>{t("sessions.col_duration")}</th>
+              <th>{t("sessions.col_model")}</th>
+              <th>{t("sessions.col_tokens")}</th>
+              <th>{t("sessions.col_tools")}</th>
+              <th>{t("sessions.col_flags")}</th>
             </tr>
           </thead>
           <tbody>{topLevel?.map((s) => renderRow(s, 0))}</tbody>

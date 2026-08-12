@@ -242,6 +242,16 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
                         "tokens_cache_write": cache.get("write", 0),
                         "reason": part.get("reason"),
                     }
+                elif ptype == "subtask":
+                    # A `task` call to a named subagent (e.g. a "scout"). This
+                    # part never carries the spawned child session's id - only
+                    # its own session.created (with parentID) does, so linking
+                    # the two together is a best-effort, request-time join
+                    # (see routes.py) rather than something stored here.
+                    agent_name = part.get("agent") or "?"
+                    p.tool_name = f"task:{agent_name}"
+                    p.title = part.get("description")
+                    p.input = {"agent": agent_name, "prompt": part.get("prompt"), "description": part.get("description")}
                 parts[key] = p
         elif etype == "tool.execute.before":
             call_id = payload.get("callID")
@@ -333,6 +343,11 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
         elapsed = None
         if m.started_ms is not None and m.completed_ms is not None:
             elapsed = max(0, m.completed_ms - m.started_ms)
+            # The message's own request/response window counts as "covered"
+            # even where no individual part has explicit timing (OpenCode's
+            # step-start/step-finish carry no time field at all) - part
+            # intervals are a subset of this and merge_intervals() dedupes.
+            covered.append((m.started_ms, m.completed_ms))
         tool_time = msg_tool_time.get(mid, 0)
         model_time = max(0, elapsed - tool_time) if elapsed is not None else None
         for k in session_tokens:

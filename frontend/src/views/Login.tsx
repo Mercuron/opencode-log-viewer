@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { api } from "../api"
+import { useLocale } from "../i18n"
 
 export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
+  const { t } = useLocale()
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -14,7 +16,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
       await api.login(password)
       onLoggedIn()
     } catch {
-      setError("Неверный пароль")
+      setError(t("login.error"))
     } finally {
       setBusy(false)
     }
@@ -23,17 +25,17 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   return (
     <div className="center-message">
       <form className="login-form" onSubmit={submit}>
-        <h1>OpenCode Trace Viewer</h1>
-        <p>Вьювер содержит выдержки из боевых логов агентов. Доступ ограничен паролем.</p>
+        <h1>{t("login.title")}</h1>
+        <p>{t("login.subtitle")}</p>
         <input
           type="password"
-          placeholder="Пароль"
+          placeholder={t("login.password_placeholder")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoFocus
         />
         <button type="submit" disabled={busy}>
-          Войти
+          {t("login.button")}
         </button>
         {error && <div className="error-text">{error}</div>}
       </form>

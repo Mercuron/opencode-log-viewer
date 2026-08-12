@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .config import Settings
-from .redact import redact_value
+from .redact import load_patterns, redact_value
 from .indexer import reindex_session
 
 REQUIRED_FIELDS = ["schema_version", "event_id", "source_id", "source_name", "sequence", "event_type", "observed_at", "context", "payload"]
@@ -65,6 +65,7 @@ def write_batch(conn: sqlite3.Connection, events: list[dict], settings: Settings
     result = BatchResult()
     now = datetime.now(UTC).isoformat()
     touched_sessions: set[str] = set()
+    patterns = load_patterns(conn)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -75,7 +76,7 @@ def write_batch(conn: sqlite3.Connection, events: list[dict], settings: Settings
                 result.errors.append({"event_id": event.get("event_id"), "error": error})
                 continue
 
-            payload = redact_value(event["payload"], settings.redact_patterns)
+            payload = redact_value(event["payload"], patterns)
             session_id = event.get("session_id")
 
             _upsert_source(conn, event, now)

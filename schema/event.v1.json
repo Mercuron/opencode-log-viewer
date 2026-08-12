@@ -38,7 +38,7 @@
     },
     "event_type": {
       "type": "string",
-      "description": "OpenCode Bus event type (e.g. message.part.updated) or a plugin-internal diagnostic type prefixed with plugin. (e.g. plugin.events_dropped)."
+      "description": "OpenCode Bus event type (e.g. message.part.updated), a plugin-internal diagnostic type prefixed with plugin. (e.g. plugin.events_dropped), or a plugin-synthesized type built from experimental (non-Bus) hooks - currently only context.snapshot, assembled from experimental.chat.system.transform + experimental.chat.messages.transform right before a request is sent to the model."
     },
     "event_time": {
       "type": ["string", "null"],

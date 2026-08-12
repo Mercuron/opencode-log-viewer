@@ -207,6 +207,13 @@ input {
   background: var(--surface);
 }
 
+.notes-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .clickable-row-active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
@@ -553,6 +560,18 @@ section {
 .sort-arrow {
   margin-left: 0.25rem;
   color: var(--accent);
+}
+
+.dialogue-block {
+  margin-bottom: 1.25rem;
+}
+
+.dialogue-header {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid var(--accent);
 }
 
 .step-group {

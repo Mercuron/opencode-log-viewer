@@ -1,14 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { api, Session } from "../api"
 import { useLocale } from "../i18n"
-
-function fmtMs(ms: number | null): string {
-  if (ms == null) return "?"
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)} с`
-  const m = Math.floor(s / 60)
-  return `${m}:${String(Math.round(s % 60)).padStart(2, "0")}`
-}
+import { fmtMs } from "../format"
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—"
@@ -49,12 +42,6 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
             {depth > 0 && "↳ "}
             {depth > 0 && s.agent && <span className="subagent-badge">{s.agent}</span>}
             {s.title || t("sessions.unnamed")}
-            {s.notes && (
-              <span className="muted" title={s.notes}>
-                {" "}
-                📝
-              </span>
-            )}
           </td>
           <td>{fmtDate(s.created_at)}</td>
           <td>{fmtMs(s.duration_ms)}</td>
@@ -66,6 +53,9 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
           <td>
             {s.error_count > 0 || s.tool_errors > 0 ? <span className="badge badge-bad">{t("sessions.badge_error")}</span> : null}
             {s.compactions > 0 ? <span className="badge badge-warn">{t("sessions.badge_compaction")}</span> : null}
+          </td>
+          <td className="notes-cell" title={s.notes || ""}>
+            {s.notes || ""}
           </td>
         </tr>
         {childrenOf(s.id).map((c) => renderRow(c, depth + 1))}
@@ -99,6 +89,7 @@ export default function Sessions({ sourceId, onOpenSession }: { sourceId: string
               <th>{t("sessions.col_tokens")}</th>
               <th>{t("sessions.col_tools")}</th>
               <th>{t("sessions.col_flags")}</th>
+              <th>{t("sessions.col_notes")}</th>
             </tr>
           </thead>
           <tbody>{topLevel?.map((s) => renderRow(s, 0))}</tbody>

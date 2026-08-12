@@ -13,6 +13,7 @@ from viewer.detectors.todo_stagnation import TodoStagnation
 from viewer.detectors.cyrillic_identifier import CyrillicIdentifier
 from viewer.detectors.tool_error import ToolError
 from viewer.detectors.context_near_limit import ContextNearLimit
+from viewer.detectors.tool_soft_failure import ToolSoftFailure
 
 
 def _part(**kwargs):
@@ -151,3 +152,18 @@ def test_context_near_limit():
 
     unknown_model = trace(session={"model": "some-unknown-model"}, messages=[_message(tokens_input=999_999, seq=1, id="m1")])
     assert not ContextNearLimit().run(unknown_model)
+
+
+def test_tool_soft_failure():
+    soft_fail = trace(parts=[_part(id="1", status="completed", output_text=json.dumps({"success": False, "message": "boom"}))])
+    assert ToolSoftFailure().run(soft_fail)
+
+    ok = trace(parts=[_part(id="1", status="completed", output_text=json.dumps({"success": True}))])
+    assert not ToolSoftFailure().run(ok)
+
+    # status=="error" is already covered by tool_error - not double-flagged here.
+    real_error = trace(parts=[_part(id="1", status="error", output_text=json.dumps({"success": False}))])
+    assert not ToolSoftFailure().run(real_error)
+
+    not_json = trace(parts=[_part(id="1", status="completed", output_text="plain text output")])
+    assert not ToolSoftFailure().run(not_json)

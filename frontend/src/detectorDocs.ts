@@ -40,6 +40,10 @@ export const detectorDocs: Record<string, Record<Locale, string>> = {
     ru: "Вызов инструмента завершился статусом error/failed.",
     en: "A tool call finished with status error/failed.",
   },
+  tool_soft_failure: {
+    ru: "Инструмент вернул success=false в теле ответа (JSON), хотя сам вызов не помечен ошибкой — статус OpenCode не видит такие сбои, это отдельная проверка.",
+    en: "The tool's own JSON body says success=false even though the call itself isn't marked as an error — OpenCode's status can't see this kind of failure, so it's checked separately.",
+  },
   context_near_limit: {
     ru: "tokens_input у одного из сообщений превышает 80% известного контекстного окна модели.",
     en: "tokens_input on one of the messages exceeds 80% of the model's known context window.",

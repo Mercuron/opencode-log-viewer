@@ -51,6 +51,7 @@ const dict = {
     "sessions.col_tokens": "Токены in/out",
     "sessions.col_tools": "Инструменты",
     "sessions.col_flags": "Флаги",
+    "sessions.col_notes": "Заметка",
     "sessions.badge_error": "ошибка",
     "sessions.badge_compaction": "компакция",
     "sessions.unnamed": "(без названия)",
@@ -149,6 +150,47 @@ const dict = {
     "unit.kb": "КБ",
     "unit.mb": "МБ",
     "unit.gb": "ГБ",
+
+    "dialogue.label": "Диалог",
+    "feed.finish_output_suffix": "output ток.",
+    "feed.soft_failure_badge": "success: false в ответе",
+    "feed.output_truncated_by_opencode":
+      "Вывод инструмента обрезан самим OpenCode (лимит по байтам) — полных данных в системе больше нет.",
+    "session.copied_clipboard": "Скопировано в буфер обмена",
+    "session.copied_fallback": "Буфер обмена недоступен (нет HTTPS) — файл скачан вместо копирования",
+    "session.copy_failed": "Не удалось ни скопировать, ни скачать — попробуйте «Скачать .md»",
+
+    "context_growth.exact_badge": "точный снимок",
+    "context_growth.estimate_badge": "оценка по сохранённым выводам",
+    "context_growth.known_from_outputs": "Известно по выводам инструментов",
+    "context_growth.reported_by_model": "Заявлено моделью (input)",
+    "context_growth.no_snapshot_hint":
+      "Для этого шага нет точного снимка от плагина — показана оценка по сохранённым выводам инструментов, она всегда меньше реального размера (не видит системный промпт и инструкции).",
+
+    "settings.redact_title": "Редакция данных",
+    "settings.redact_body":
+      "Эти правила (регулярные выражения) применяются ко всем входящим событиям до записи на диск. Изменения действуют только на новые события — уже отредактированные данные восстановить нельзя.",
+    "settings.redact_guid_hint":
+      "GUID-подобные строки (8-4-4-4-12 через дефис) могут случайно попадать под правило «32+ символов» — отключите его ниже, если это мешает.",
+    "settings.redact_col_pattern": "Правило",
+    "settings.redact_col_status": "Статус",
+    "settings.redact_default_badge": "по умолчанию",
+    "settings.redact_enabled": "включено",
+    "settings.redact_disabled": "выключено",
+    "settings.redact_delete": "Удалить",
+    "settings.redact_add_placeholder": "Новое регулярное выражение",
+    "settings.redact_add_button": "Добавить",
+
+    "settings.storage_title": "Место на диске",
+    "settings.storage_current": "Сейчас занято",
+    "settings.storage_older_than_label": "Старше скольких дней считать",
+    "settings.storage_calculate": "Рассчитать",
+    "settings.storage_calculating": "Считаю…",
+    "settings.storage_estimate_sessions": "Сессий под удаление",
+    "settings.storage_estimate_bytes": "≈Освободится",
+    "settings.storage_delete_button": "Удалить эти сессии",
+    "settings.storage_delete_confirm": "Удалить безвозвратно? Это действие нельзя отменить.",
+    "settings.storage_deleted": "Удалено сессий",
   },
   en: {
     "nav.sources": "Agents",
@@ -191,6 +233,7 @@ const dict = {
     "sessions.col_tokens": "Tokens in/out",
     "sessions.col_tools": "Tools",
     "sessions.col_flags": "Flags",
+    "sessions.col_notes": "Note",
     "sessions.badge_error": "error",
     "sessions.badge_compaction": "compaction",
     "sessions.unnamed": "(untitled)",
@@ -289,6 +332,47 @@ const dict = {
     "unit.kb": "KB",
     "unit.mb": "MB",
     "unit.gb": "GB",
+
+    "dialogue.label": "Dialogue",
+    "feed.finish_output_suffix": "output tok.",
+    "feed.soft_failure_badge": "success: false in response",
+    "feed.output_truncated_by_opencode":
+      "This tool output was truncated by OpenCode itself (its own byte limit) - the full data no longer exists anywhere in the system.",
+    "session.copied_clipboard": "Copied to clipboard",
+    "session.copied_fallback": "Clipboard unavailable (no HTTPS) - downloaded the file instead",
+    "session.copy_failed": "Could neither copy nor download - try \"Download .md\"",
+
+    "context_growth.exact_badge": "exact snapshot",
+    "context_growth.estimate_badge": "estimate from stored outputs",
+    "context_growth.known_from_outputs": "Known from tool outputs",
+    "context_growth.reported_by_model": "Reported by the model (input)",
+    "context_growth.no_snapshot_hint":
+      "No exact snapshot from the plugin for this step - showing an estimate from stored tool outputs, which always understates the real size (it can't see the system prompt or instructions).",
+
+    "settings.redact_title": "Data redaction",
+    "settings.redact_body":
+      "These rules (regular expressions) apply to every incoming event before it's written to disk. Changes only affect new events - already-redacted data can't be recovered.",
+    "settings.redact_guid_hint":
+      "GUID-shaped strings (8-4-4-4-12 with hyphens) can accidentally match the \"32+ characters\" rule below - disable it if that gets in the way.",
+    "settings.redact_col_pattern": "Rule",
+    "settings.redact_col_status": "Status",
+    "settings.redact_default_badge": "default",
+    "settings.redact_enabled": "enabled",
+    "settings.redact_disabled": "disabled",
+    "settings.redact_delete": "Delete",
+    "settings.redact_add_placeholder": "New regular expression",
+    "settings.redact_add_button": "Add",
+
+    "settings.storage_title": "Disk usage",
+    "settings.storage_current": "Currently used",
+    "settings.storage_older_than_label": "Consider sessions older than (days)",
+    "settings.storage_calculate": "Calculate",
+    "settings.storage_calculating": "Calculating…",
+    "settings.storage_estimate_sessions": "Sessions to remove",
+    "settings.storage_estimate_bytes": "≈Would free up",
+    "settings.storage_delete_button": "Delete these sessions",
+    "settings.storage_delete_confirm": "Delete permanently? This cannot be undone.",
+    "settings.storage_deleted": "Sessions deleted",
   },
 } as const
 

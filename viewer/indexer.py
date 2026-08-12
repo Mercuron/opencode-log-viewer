@@ -91,10 +91,39 @@ def _fetch_events(conn: sqlite3.Connection, session_id: str) -> list[dict]:
     return out
 
 
+def _split_into_turns(message_order: list[str], messages: dict[str, "_Message"]) -> list[list[str]]:
+    """A turn = a user message plus everything the agent did in response,
+    up to (not including) the next user message. Pauses *between* turns are
+    the human deciding what to ask next, not the agent doing anything - see
+    _turn_span/reindex_session for why those pauses are excluded from
+    duration_ms and unaccounted_ms entirely rather than just hidden in the UI."""
+    turns: list[list[str]] = []
+    current: list[str] = []
+    for mid in message_order:
+        if messages[mid].role == "user" and current:
+            turns.append(current)
+            current = []
+        current.append(mid)
+    if current:
+        turns.append(current)
+    return turns
+
+
+def _turn_span(turn_mids: list[str], messages: dict[str, "_Message"]) -> tuple[int, int] | None:
+    starts = [messages[mid].started_ms for mid in turn_mids if messages[mid].started_ms is not None]
+    if not starts:
+        return None
+    ends = [messages[mid].completed_ms for mid in turn_mids if messages[mid].completed_ms is not None]
+    start = min(starts)
+    end = max(ends) if ends else max(starts)  # no assistant reply yet - don't invent an end
+    return start, max(start, end)
+
+
 def _wipe_session_derived(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute("DELETE FROM parts WHERE session_id = ?", (session_id,))
     conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
     conn.execute("DELETE FROM todo_snapshots WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM context_snapshots WHERE session_id = ?", (session_id,))
     conn.execute("DELETE FROM detections WHERE session_id = ?", (session_id,))
 
 
@@ -113,6 +142,7 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
     pending_before: dict[str, dict] = {}
     pending_after: dict[str, dict] = {}
     todo_snapshots: list[tuple[str | None, list]] = []
+    context_snapshots: list[tuple[str | None, dict]] = []
 
     def get_message(mid: str) -> _Message:
         if mid not in messages:
@@ -270,6 +300,8 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
                 pending_after[call_id] = payload
         elif etype == "todo.updated":
             todo_snapshots.append((ev.get("event_time") or ev.get("observed_at"), payload.get("todos") or []))
+        elif etype == "context.snapshot":
+            context_snapshots.append((ev.get("event_time") or ev.get("observed_at"), payload))
 
     # Session-level fallbacks if no session.created/updated ever arrived.
     if session.created_ms is None and events:
@@ -306,10 +338,6 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
             session.imported,
         ),
     )
-
-    duration_ms = None
-    if session.created_ms is not None and session.completed_ms is not None:
-        duration_ms = max(0, session.completed_ms - session.created_ms)
 
     tool_calls = 0
     tool_errors = 0
@@ -419,10 +447,42 @@ def reindex_session(conn: sqlite3.Connection, session_id: str) -> None:
             (session_id, captured_at, json.dumps(todos, ensure_ascii=False)),
         )
 
+    for captured_at, snapshot_payload in context_snapshots:
+        breakdown = snapshot_payload.get("breakdown") or []
+        # Anchor the snapshot to the most recent message it covers - it's
+        # captured right before the *next* (not-yet-created) assistant
+        # message, so there's no better id to attach it to.
+        message_id = breakdown[-1].get("messageID") if breakdown else None
+        conn.execute(
+            """
+            INSERT INTO context_snapshots (session_id, message_id, captured_at, system_chars, total_chars, breakdown_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                message_id,
+                captured_at,
+                snapshot_payload.get("systemChars", 0),
+                snapshot_payload.get("totalChars", 0),
+                json.dumps(breakdown, ensure_ascii=False),
+            ),
+        )
+
+    # duration_ms/unaccounted_ms are the sum across dialogue turns only -
+    # time between turns (the human deciding what to ask next) never counts
+    # as either "duration" or "unaccounted", since it isn't the agent's time
+    # at all. See _split_into_turns/_turn_span.
+    turns = _split_into_turns(message_order, messages)
+    duration_ms = None
     unaccounted_ms = None
-    if duration_ms is not None:
-        covered_total = covered_ms(covered, session.created_ms, session.completed_ms)
-        unaccounted_ms = max(0, duration_ms - covered_total)
+    for turn_mids in turns:
+        span = _turn_span(turn_mids, messages)
+        if span is None:
+            continue
+        turn_start, turn_end = span
+        duration_ms = (duration_ms or 0) + max(0, turn_end - turn_start)
+        turn_covered = covered_ms(covered, turn_start, turn_end)
+        unaccounted_ms = (unaccounted_ms or 0) + max(0, (turn_end - turn_start) - turn_covered)
 
     conn.execute(
         """

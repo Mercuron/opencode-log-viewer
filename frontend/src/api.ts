@@ -121,12 +121,30 @@ export interface TodoSnapshot {
   items_json: string
 }
 
+export interface ContextSnapshot {
+  id: number
+  message_id: string | null
+  captured_at: string | null
+  system_chars: number
+  total_chars: number
+  breakdown_json: string
+}
+
+export interface RedactPattern {
+  id: number
+  pattern: string
+  enabled: number
+  is_default: number
+  created_at: string
+}
+
 export interface SessionDetail {
   session: Session
   messages: Message[]
   parts: Part[]
   detections: Detection[]
   todo_snapshots: TodoSnapshot[]
+  context_snapshots: ContextSnapshot[]
   children: { id: string; title: string | null; status: string | null; agent: string | null; created_at: string | null }[]
   inference_spans: Record<string, unknown>[]
   tool_stats: Record<string, { calls: number; errors: number; total_ms: number; tokens_est: number }>
@@ -162,4 +180,24 @@ export const api = {
       body: JSON.stringify({ source_name: sourceName, format: "llama-server", log, session_id: sessionId }),
     }),
   stats: () => request<{ sources: number; sessions: number; events: number; db_size_bytes: number }>("/stats"),
+
+  redactPatterns: () => request<RedactPattern[]>("/settings/redact-patterns"),
+  addRedactPattern: (pattern: string) =>
+    request<RedactPattern>("/settings/redact-patterns", { method: "POST", body: JSON.stringify({ pattern }) }),
+  toggleRedactPattern: (id: number, enabled: boolean) =>
+    request<{ status: string }>(`/settings/redact-patterns/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  deleteRedactPattern: (id: number) =>
+    request<{ status: string }>(`/settings/redact-patterns/${id}`, { method: "DELETE" }),
+
+  adminStorage: () => request<{ db_size_bytes: number }>("/admin/storage"),
+  cleanupEstimate: (olderThanDays: number) =>
+    request<{ sessions_count: number; estimated_bytes: number }>("/admin/cleanup/estimate", {
+      method: "POST",
+      body: JSON.stringify({ older_than_days: olderThanDays }),
+    }),
+  cleanupExecute: (olderThanDays: number) =>
+    request<{ deleted_sessions: number }>("/admin/cleanup/execute", {
+      method: "POST",
+      body: JSON.stringify({ older_than_days: olderThanDays }),
+    }),
 }

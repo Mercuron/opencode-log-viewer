@@ -1,26 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { api, Detection, Message, Part, SessionDetail as SessionDetailData, TodoSnapshot } from "../api"
-import { useLocale, Locale, TranslationKey } from "../i18n"
+import { api, ContextSnapshot, Detection, Message, Part, SessionDetail as SessionDetailData, TodoSnapshot } from "../api"
+import { useLocale, Locale } from "../i18n"
 import { detectorDoc } from "../detectorDocs"
 import FullValueModal from "../components/FullValueModal"
+import { fmtMs, fmtBytes } from "../format"
 
 const FULL_VALUE_THRESHOLD = 2000
 const CLEARED_MARKER = "[Old tool result content cleared]"
-
-function fmtMs(ms: number | null | undefined): string {
-  if (ms == null) return "?"
-  const s = ms / 1000
-  if (s < 60) return `${s.toFixed(1)} с`
-  const m = Math.floor(s / 60)
-  return `${m}:${String(Math.round(s % 60)).padStart(2, "0")}`
-}
-
-function fmtBytes(n: number, t: (k: TranslationKey) => string): string {
-  if (n < 1024) return `${n} ${t("unit.b")}`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} ${t("unit.kb")}`
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} ${t("unit.mb")}`
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} ${t("unit.gb")}`
-}
+const REDACTED_MARKER = "[REDACTED]"
+// OpenCode's own tool_output.max_bytes defaults to 131072 - a value landing
+// suspiciously close to that (within a comment/JSON-fencepost's worth) is
+// almost certainly OpenCode's own truncation, not ours. Never exact, hence
+// a margin rather than an equality check.
+const OPENCODE_TRUNCATION_HINT_THRESHOLD = 130_000
 
 function levelClass(level: string): string {
   return level === "bad" ? "badge-bad" : level === "warn" ? "badge-warn" : "badge-info"
@@ -28,6 +20,52 @@ function levelClass(level: string): string {
 
 function toMs(iso: string | null | undefined): number | null {
   return iso ? new Date(iso).getTime() : null
+}
+
+/** A turn = a user message plus everything the agent did in response, up to
+ * (not including) the next user message. Mirrors viewer/indexer.py's
+ * _split_into_turns exactly, so the visual grouping here matches what
+ * duration_ms/unaccounted_ms on the backend actually measure. */
+function splitIntoTurns(messages: Message[]): Message[][] {
+  const turns: Message[][] = []
+  let current: Message[] = []
+  for (const m of messages) {
+    if (m.role === "user" && current.length) {
+      turns.push(current)
+      current = []
+    }
+    current.push(m)
+  }
+  if (current.length) turns.push(current)
+  return turns
+}
+
+function legacyCopy(text: string): boolean {
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.style.position = "fixed"
+  textarea.style.opacity = "0"
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  let ok = false
+  try {
+    ok = document.execCommand("copy")
+  } catch {
+    ok = false
+  }
+  document.body.removeChild(textarea)
+  return ok
+}
+
+function downloadMarkdown(md: string, filename: string) {
+  const blob = new Blob([md], { type: "text/markdown" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function DetectionCard({ d, locale }: { d: Detection; locale: Locale }) {
@@ -48,18 +86,30 @@ function DetectionCard({ d, locale }: { d: Detection; locale: Locale }) {
   )
 }
 
-function PartRow({ part, onOpenSession, onShowFull }: { part: Part; onOpenSession: (id: string) => void; onShowFull: (title: string, value: string) => void }) {
+function PartRow({
+  part,
+  softFailure,
+  onOpenSession,
+  onShowFull,
+}: {
+  part: Part
+  softFailure: boolean
+  onOpenSession: (id: string) => void
+  onShowFull: (title: string, value: string) => void
+}) {
   const { t } = useLocale()
   const [open, setOpen] = useState(false)
 
   function longButton(label: string, value: string) {
-    if (value.length <= FULL_VALUE_THRESHOLD) return null
+    if (value.length <= FULL_VALUE_THRESHOLD && !value.includes(REDACTED_MARKER)) return null
     return (
       <button className="button-link" onClick={() => onShowFull(label, value)}>
         {t("feed.show_full")} ({value.length})
       </button>
     )
   }
+
+  const truncatedByOpenCode = (part.output_text?.length ?? 0) >= OPENCODE_TRUNCATION_HINT_THRESHOLD
 
   return (
     <div className="feed-item">
@@ -68,6 +118,7 @@ function PartRow({ part, onOpenSession, onShowFull }: { part: Part; onOpenSessio
         <span className="feed-type">{part.type}</span>
         {part.tool_name && <span className="feed-tool">{part.tool_name}</span>}
         {part.status && <span className={`badge ${part.status === "error" ? "badge-bad" : "badge-muted"}`}>{part.status}</span>}
+        {softFailure && <span className="badge badge-warn">{t("feed.soft_failure_badge")}</span>}
         <span className="feed-duration">{fmtMs(part.duration_ms)}</span>
         {part.output_tokens_est ? <span className="muted">≈{part.output_tokens_est} ток</span> : null}
       </div>
@@ -91,6 +142,7 @@ function PartRow({ part, onOpenSession, onShowFull }: { part: Part; onOpenSessio
               <div className="muted">{t("feed.output_label")}</div>
               <pre className="feed-pre">{part.output_text.slice(0, FULL_VALUE_THRESHOLD)}</pre>
               {longButton(t("feed.output_label"), part.output_text)}
+              {truncatedByOpenCode && <div className="muted">{t("feed.output_truncated_by_opencode")}</div>}
             </>
           )}
           {part.error && (
@@ -132,11 +184,13 @@ function groupPartsByMessage(parts: Part[], messages: Message[]) {
 function StepGroup({
   message,
   parts,
+  softFailureIds,
   onOpenSession,
   onShowFull,
 }: {
   message: Message | null
   parts: Part[]
+  softFailureIds: Set<string>
   onOpenSession: (id: string) => void
   onShowFull: (title: string, value: string) => void
 }) {
@@ -155,7 +209,7 @@ function StepGroup({
         </span>
         {finishMeta && (
           <span className="muted">
-            {t("feed.finish_label")}: {finishMeta.reason || "?"} · +{finishMeta.tokens_output ?? 0}
+            {t("feed.finish_label")}: {finishMeta.reason || "?"} · +{finishMeta.tokens_output ?? 0} {t("feed.finish_output_suffix")}
           </span>
         )}
       </div>
@@ -163,7 +217,9 @@ function StepGroup({
         {bodyParts.length === 0 ? (
           <div className="muted">—</div>
         ) : (
-          bodyParts.map((p) => <PartRow key={p.id} part={p} onOpenSession={onOpenSession} onShowFull={onShowFull} />)
+          bodyParts.map((p) => (
+            <PartRow key={p.id} part={p} softFailure={softFailureIds.has(p.id)} onOpenSession={onOpenSession} onShowFull={onShowFull} />
+          ))
         )}
       </div>
     </div>
@@ -197,30 +253,26 @@ function TodoHistory({ snapshots }: { snapshots: TodoSnapshot[] }) {
   )
 }
 
-function Waterfall({ session, messages }: { session: SessionDetailData["session"]; messages: Message[] }) {
+function turnPreviewText(turn: Message[], parts: Part[]): string {
+  const userMsg = turn.find((m) => m.role === "user")
+  if (!userMsg) return ""
+  const textPart = parts.find((p) => p.message_id === userMsg.id && p.type === "text" && p.text)
+  const text = textPart?.text ?? ""
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text
+}
+
+function Waterfall({ messages, parts }: { messages: Message[]; parts: Part[] }) {
   const { t } = useLocale()
-  const sessionStart = toMs(session.created_at)
-  const sessionEnd = toMs(session.completed_at)
+  const turns = useMemo(() => splitIntoTurns(messages), [messages])
 
   const withTimes = messages
     .map((m) => ({ m, start: toMs(m.started_at), end: toMs(m.completed_at) }))
     .filter((x): x is { m: Message; start: number; end: number } => x.start != null && x.end != null)
-    .sort((a, b) => a.start - b.start)
+  const maxElapsed = Math.max(1, ...withTimes.map((x) => x.end - x.start))
 
-  if (sessionStart == null || sessionEnd == null || sessionEnd <= sessionStart) {
+  if (withTimes.length === 0) {
     return <p className="muted">{t("context_attrib.empty")}</p>
   }
-  const totalSpan = sessionEnd - sessionStart
-
-  type Item = { kind: "gap"; ms: number } | { kind: "message"; m: Message; start: number; end: number }
-  const items: Item[] = []
-  let cursor = sessionStart
-  for (const w of withTimes) {
-    if (w.start > cursor) items.push({ kind: "gap", ms: w.start - cursor })
-    items.push({ kind: "message", m: w.m, start: w.start, end: w.end })
-    cursor = Math.max(cursor, w.end)
-  }
-  if (sessionEnd > cursor) items.push({ kind: "gap", ms: sessionEnd - cursor })
 
   return (
     <div>
@@ -234,44 +286,47 @@ function Waterfall({ session, messages }: { session: SessionDetailData["session"
           {t("waterfall.legend_tool")}
         </span>
       </div>
-      <div className="waterfall">
-        {items.map((item, i) => {
-          const widthPct = Math.max(0.5, ((item.kind === "gap" ? item.ms : item.end - item.start) / totalSpan) * 100)
-          if (item.kind === "gap") {
-            return (
-              <div key={i} className="waterfall-row">
-                <span className="waterfall-label muted">{t("waterfall.gap_label")}</span>
-                <div className="waterfall-track">
-                  <div className="waterfall-bar bar-gap" style={{ width: `${widthPct}%` }} />
-                </div>
-                <span className="muted">{fmtMs(item.ms)}</span>
-              </div>
-            )
-          }
-          const elapsed = item.end - item.start
-          const toolMs = item.m.tool_time_ms || 0
-          const toolPct = elapsed > 0 ? Math.min(100, (toolMs / elapsed) * 100) : 0
-          return (
-            <div key={i} className="waterfall-row" title={`#${item.m.seq} · ${fmtMs(elapsed)}`}>
-              <span className="waterfall-label">
-                #{item.m.seq} {item.m.role}
-              </span>
-              <div className="waterfall-track">
-                <div className="waterfall-bar-container" style={{ width: `${widthPct}%` }}>
-                  <div className="waterfall-bar bar-model" style={{ width: `${100 - toolPct}%` }} />
-                  <div className="waterfall-bar bar-tool" style={{ width: `${toolPct}%` }} />
-                </div>
-              </div>
-              <span className="muted">{fmtMs(elapsed)}</span>
+      {turns.map((turn, ti) => {
+        const rows = turn
+          .map((m) => ({ m, start: toMs(m.started_at), end: toMs(m.completed_at) }))
+          .filter((x): x is { m: Message; start: number; end: number } => x.start != null && x.end != null)
+        if (rows.length === 0) return null
+        return (
+          <div key={turn[0].id} className="dialogue-block">
+            <div className="dialogue-header">
+              {t("dialogue.label")} {ti + 1}
+              {turnPreviewText(turn, parts) && <span className="muted"> — {turnPreviewText(turn, parts)}</span>}
             </div>
-          )
-        })}
-      </div>
+            <div className="waterfall">
+              {rows.map(({ m, start, end }) => {
+                const elapsed = end - start
+                const widthPct = Math.max(1, (elapsed / maxElapsed) * 100)
+                const toolMs = m.tool_time_ms || 0
+                const toolPct = elapsed > 0 ? Math.min(100, (toolMs / elapsed) * 100) : 0
+                return (
+                  <div key={m.id} className="waterfall-row" title={`#${m.seq} · ${fmtMs(elapsed)}`}>
+                    <span className="waterfall-label">
+                      #{m.seq} {m.role}
+                    </span>
+                    <div className="waterfall-track">
+                      <div className="waterfall-bar-container" style={{ width: `${widthPct}%` }}>
+                        <div className="waterfall-bar bar-model" style={{ width: `${100 - toolPct}%` }} />
+                        <div className="waterfall-bar bar-tool" style={{ width: `${toolPct}%` }} />
+                      </div>
+                    </div>
+                    <span className="muted">{fmtMs(elapsed)}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-function ContextGrowth({ messages, parts }: { messages: Message[]; parts: Part[] }) {
+function ContextGrowth({ messages, parts, contextSnapshots }: { messages: Message[]; parts: Part[]; contextSnapshots: ContextSnapshot[] }) {
   const { t } = useLocale()
   const assistantSteps = useMemo(() => messages.filter((m) => m.role === "assistant"), [messages])
   const [selectedId, setSelectedId] = useState<string | null>(assistantSteps.length ? assistantSteps[assistantSteps.length - 1].id : null)
@@ -282,6 +337,14 @@ function ContextGrowth({ messages, parts }: { messages: Message[]; parts: Part[]
     const idx = messages.findIndex((m) => m.id === selectedId)
     return new Set(messages.slice(0, idx + 1).map((m) => m.id))
   }, [selectedId, messages])
+
+  const exactSnapshot = useMemo(() => {
+    let best: ContextSnapshot | null = null
+    for (const s of contextSnapshots) {
+      if (s.message_id && eligibleMessageIds.has(s.message_id)) best = s
+    }
+    return best
+  }, [contextSnapshots, eligibleMessageIds])
 
   const breakdown = useMemo(() => {
     const map = new Map<string, { tokens: number; bytes: number; cleared: number }>()
@@ -302,7 +365,8 @@ function ContextGrowth({ messages, parts }: { messages: Message[]; parts: Part[]
 
   if (assistantSteps.length === 0) return <p className="muted">{t("context_attrib.empty")}</p>
 
-  const selectedSeq = messages.find((m) => m.id === selectedId)?.seq
+  const selectedMessage = messages.find((m) => m.id === selectedId)
+  const knownTokens = breakdown.reduce((sum, [, b]) => sum + b.tokens, 0)
 
   return (
     <div>
@@ -324,8 +388,27 @@ function ContextGrowth({ messages, parts }: { messages: Message[]; parts: Part[]
       {selectedId && (
         <div>
           <h3>
-            {t("context_growth.breakdown_title")} #{selectedSeq}
+            {t("context_growth.breakdown_title")} #{selectedMessage?.seq}
           </h3>
+
+          {exactSnapshot ? (
+            <div className="detection-card">
+              <span className="badge badge-info">{t("context_growth.exact_badge")}</span>
+              <p>
+                {t("context_growth.reported_by_model")}: {selectedMessage?.tokens_input ?? "?"} · system_chars={exactSnapshot.system_chars} ·
+                total_chars={exactSnapshot.total_chars}
+              </p>
+            </div>
+          ) : (
+            <p className="muted">{t("context_growth.no_snapshot_hint")}</p>
+          )}
+
+          <p className="muted">
+            {t("context_growth.known_from_outputs")}: ≈{knownTokens} · {t("context_growth.reported_by_model")}:{" "}
+            {selectedMessage?.tokens_input ?? "?"}
+            {!exactSnapshot && ` (${t("context_growth.estimate_badge")})`}
+          </p>
+
           {breakdown.length === 0 ? (
             <p className="muted">{t("context_attrib.empty")}</p>
           ) : (
@@ -406,15 +489,38 @@ export default function SessionDetail({
   if (error) return <div className="error-text">{error}</div>
   if (!data) return <div className="center-message">{t("common.loading")}</div>
 
-  const { session, messages, parts, detections, todo_snapshots, tool_stats, context_attribution } = data
+  const { session, messages, parts, detections, todo_snapshots, context_snapshots, tool_stats, context_attribution } = data
   const visibleParts = toolFilter ? parts.filter((p) => p.tool_name === toolFilter) : parts
   const stepGroups = groupPartsByMessage(visibleParts, messages)
 
+  const turns = splitIntoTurns(messages)
+  const turnIndexByMessageId = new Map<string, number>()
+  turns.forEach((turn, i) => turn.forEach((m) => turnIndexByMessageId.set(m.id, i)))
+
+  const softFailureIds = new Set(
+    detections.filter((d) => d.kind === "tool_soft_failure" && d.evidence_json).map((d) => JSON.parse(d.evidence_json!).part_id as string),
+  )
+
   async function copyFullLog() {
     const md = await api.exportMarkdown(sessionId)
-    await navigator.clipboard.writeText(md)
-    setCopyStatus(t("session.copied"))
-    setTimeout(() => setCopyStatus(null), 2500)
+    const filename = `${sessionId}.md`
+    try {
+      if (!window.isSecureContext || !navigator.clipboard) throw new Error("insecure context")
+      await navigator.clipboard.writeText(md)
+      setCopyStatus(t("session.copied_clipboard"))
+    } catch {
+      if (legacyCopy(md)) {
+        setCopyStatus(t("session.copied_clipboard"))
+      } else {
+        try {
+          downloadMarkdown(md, filename)
+          setCopyStatus(t("session.copied_fallback"))
+        } catch {
+          setCopyStatus(t("session.copy_failed"))
+        }
+      }
+    }
+    setTimeout(() => setCopyStatus(null), 3500)
   }
 
   async function saveNotes() {
@@ -441,6 +547,16 @@ export default function SessionDetail({
   function selectTool(name: string) {
     setToolFilter((prev) => (prev === name ? null : name))
     feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  // Render the feed as a flat list of "Диалог N" headers interleaved with
+  // the step-groups that belong to that turn, in order.
+  const feedByTurn: { turnIndex: number; groups: typeof stepGroups }[] = []
+  for (const g of stepGroups) {
+    const turnIndex = g.message ? (turnIndexByMessageId.get(g.message.id) ?? -1) : -1
+    const bucket = feedByTurn.find((b) => b.turnIndex === turnIndex)
+    if (bucket) bucket.groups.push(g)
+    else feedByTurn.push({ turnIndex, groups: [g] })
   }
 
   return (
@@ -559,12 +675,7 @@ export default function SessionDetail({
 
       <section>
         <h2>{t("waterfall.title")}</h2>
-        <Waterfall session={session} messages={messages} />
-        {session.unaccounted_ms > 0 && (
-          <div className="unaccounted-banner">
-            {t("waterfall.gap_label")}: {fmtMs(session.unaccounted_ms)}
-          </div>
-        )}
+        <Waterfall messages={messages} parts={parts} />
       </section>
 
       <section>
@@ -624,7 +735,7 @@ export default function SessionDetail({
 
       <section>
         <h2>{t("context_growth.title")}</h2>
-        <ContextGrowth messages={messages} parts={parts} />
+        <ContextGrowth messages={messages} parts={parts} contextSnapshots={context_snapshots} />
       </section>
 
       <section>
@@ -643,8 +754,25 @@ export default function SessionDetail({
           </div>
         )}
         <div className="feed">
-          {stepGroups.map((g, i) => (
-            <StepGroup key={g.message?.id || i} message={g.message} parts={g.parts} onOpenSession={onOpenSession} onShowFull={(title, value) => setFullValue({ title, value })} />
+          {feedByTurn.map(({ turnIndex, groups }) => (
+            <div key={turnIndex} className="dialogue-block">
+              {turnIndex >= 0 && (
+                <div className="dialogue-header">
+                  {t("dialogue.label")} {turnIndex + 1}
+                  {turnPreviewText(turns[turnIndex] ?? [], parts) && <span className="muted"> — {turnPreviewText(turns[turnIndex] ?? [], parts)}</span>}
+                </div>
+              )}
+              {groups.map((g, i) => (
+                <StepGroup
+                  key={g.message?.id || i}
+                  message={g.message}
+                  parts={g.parts}
+                  softFailureIds={softFailureIds}
+                  onOpenSession={onOpenSession}
+                  onShowFull={(title, value) => setFullValue({ title, value })}
+                />
+              ))}
+            </div>
           ))}
         </div>
       </section>

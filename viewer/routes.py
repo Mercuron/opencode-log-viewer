@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -12,7 +13,7 @@ from .auth import make_session_cookie, require_ingest_auth, require_ui_session, 
 from .export import build_markdown
 from .importers.inference_log import correlate_and_store, parse_llama_server_log
 from .importers.opencode_storage import import_storage
-from .retention import db_size_bytes
+from .retention import db_size_bytes, delete_session
 
 router = APIRouter()
 
@@ -220,6 +221,9 @@ async def get_session(session_id: str, request: Request):
         "SELECT id, title, status, agent, created_at FROM sessions WHERE parent_id = ? ORDER BY created_at", (session_id,)
     ).fetchall()
     inference = conn.execute("SELECT * FROM inference_spans WHERE session_id = ?", (session_id,)).fetchall()
+    context_snapshots = conn.execute(
+        "SELECT * FROM context_snapshots WHERE session_id = ? ORDER BY id", (session_id,)
+    ).fetchall()
 
     tool_stats: dict[str, dict] = {}
     for p in parts:
@@ -276,6 +280,7 @@ async def get_session(session_id: str, request: Request):
         "todo_snapshots": [dict(t) for t in todos],
         "children": [dict(c) for c in children],
         "inference_spans": [dict(i) for i in inference],
+        "context_snapshots": [dict(c) for c in context_snapshots],
         "tool_stats": tool_stats,
         "context_attribution": context_attribution,
         "context_growth": context_growth,
@@ -386,3 +391,114 @@ async def import_inference_endpoint(body: ImportInferenceBody, request: Request)
 
     stored = await asyncio.to_thread(correlate_and_store, conn, target_session, spans)
     return {"parsed_spans": len(spans), "stored": stored, "session_id": target_session}
+
+
+# ----------------------------------------------------- redaction rules --
+
+@router.get("/settings/redact-patterns")
+async def list_redact_patterns(request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    rows = conn.execute("SELECT * FROM redact_patterns ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+class RedactPatternBody(BaseModel):
+    pattern: str
+
+
+@router.post("/settings/redact-patterns")
+async def add_redact_pattern(body: RedactPatternBody, request: Request):
+    require_ui_session(request, _settings(request))
+    try:
+        re.compile(body.pattern)
+    except re.error as exc:
+        raise HTTPException(status_code=400, detail=f"invalid regex: {exc}") from None
+    conn = _conn(request)
+    try:
+        conn.execute(
+            "INSERT INTO redact_patterns (pattern, enabled, is_default, created_at) VALUES (?, 1, 0, datetime('now'))",
+            (body.pattern,),
+        )
+    except Exception as exc:  # noqa: BLE001 - UNIQUE constraint, surfaced as a normal 400
+        raise HTTPException(status_code=400, detail=f"could not add pattern: {exc}") from None
+    row = conn.execute("SELECT * FROM redact_patterns WHERE pattern = ?", (body.pattern,)).fetchone()
+    return dict(row)
+
+
+class UpdateRedactPatternBody(BaseModel):
+    enabled: bool
+
+
+@router.patch("/settings/redact-patterns/{pattern_id}")
+async def toggle_redact_pattern(pattern_id: int, body: UpdateRedactPatternBody, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cur = conn.execute("UPDATE redact_patterns SET enabled = ? WHERE id = ?", (1 if body.enabled else 0, pattern_id))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="pattern not found")
+    return {"status": "ok"}
+
+
+@router.delete("/settings/redact-patterns/{pattern_id}")
+async def delete_redact_pattern(pattern_id: int, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cur = conn.execute("DELETE FROM redact_patterns WHERE id = ?", (pattern_id,))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="pattern not found")
+    return {"status": "ok"}
+
+
+# ------------------------------------------------------- storage admin --
+
+@router.get("/admin/storage")
+async def admin_storage(request: Request):
+    require_ui_session(request, _settings(request))
+    settings = _settings(request)
+    return {"db_size_bytes": db_size_bytes(settings.db_path)}
+
+
+class CleanupBody(BaseModel):
+    older_than_days: int
+
+
+@router.post("/admin/cleanup/estimate")
+async def cleanup_estimate(body: CleanupBody, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cutoff = f"-{body.older_than_days} days"
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS session_count,
+               COALESCE((
+                   SELECT SUM(LENGTH(e.payload_json)) FROM events e WHERE e.session_id IN (
+                       SELECT id FROM sessions WHERE created_at IS NOT NULL AND created_at < datetime('now', ?)
+                   )
+               ), 0) AS events_chars,
+               COALESCE((
+                   SELECT SUM(p.output_bytes) FROM parts p WHERE p.session_id IN (
+                       SELECT id FROM sessions WHERE created_at IS NOT NULL AND created_at < datetime('now', ?)
+                   )
+               ), 0) AS parts_bytes
+        FROM sessions WHERE created_at IS NOT NULL AND created_at < datetime('now', ?)
+        """,
+        (cutoff, cutoff, cutoff),
+    ).fetchone()
+    # events_chars is a character count (SQLite LENGTH on TEXT), not exact
+    # bytes - close enough for an estimate, always presented with "≈".
+    estimated_bytes = int(row["events_chars"]) + int(row["parts_bytes"] or 0)
+    return {"sessions_count": row["session_count"], "estimated_bytes": estimated_bytes}
+
+
+@router.post("/admin/cleanup/execute")
+async def cleanup_execute(body: CleanupBody, request: Request):
+    require_ui_session(request, _settings(request))
+    conn = _conn(request)
+    cutoff = f"-{body.older_than_days} days"
+    rows = conn.execute(
+        "SELECT id FROM sessions WHERE created_at IS NOT NULL AND created_at < datetime('now', ?)", (cutoff,)
+    ).fetchall()
+    for row in rows:
+        await asyncio.to_thread(delete_session, conn, row["id"])
+    return {"deleted_sessions": len(rows)}
